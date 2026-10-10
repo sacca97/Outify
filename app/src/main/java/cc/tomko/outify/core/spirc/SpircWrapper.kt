@@ -394,7 +394,7 @@ class SpircWrapper @Inject constructor(
      * Gets the previous tracks from queue
      */
     override suspend fun previousTracks(): List<QueueTrackDto> = withContext(Dispatchers.IO) {
-        val previousTracksJson = Spirc.nextTracks()
+        val previousTracksJson = Spirc.previousTracks()
         if (previousTracksJson.isEmpty() || previousTracksJson == "[]") return@withContext emptyList()
 
         try {

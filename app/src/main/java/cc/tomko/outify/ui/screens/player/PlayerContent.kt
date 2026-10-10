@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -842,6 +844,7 @@ private fun PlaybackControls(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AudioMetadataSection(
     audio: PlayableAudio?,
@@ -904,7 +907,7 @@ private fun AudioMetadataSection(
                     .fillMaxWidth(),
             )
         } else {
-            Row(
+            FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 audio.artists?.forEachIndexed { index, artist ->

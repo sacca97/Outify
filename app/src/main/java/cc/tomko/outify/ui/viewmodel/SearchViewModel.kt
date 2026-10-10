@@ -332,7 +332,6 @@ class SearchViewModel @Inject constructor(
     ) {
         try {
             val results = repository.searchByType(queryFlow.value, type)
-            Log.d("SearchViewModel", "search '${queryFlow.value}' type=$type returned ${results.size} results")
             val items = if (results.isNotEmpty()) {
                 fetch(results.map { it.uri })
             } else emptyList()

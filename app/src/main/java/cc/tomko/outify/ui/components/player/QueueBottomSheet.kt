@@ -589,9 +589,7 @@ fun SharedTransitionScope.QueueBottomSheet(
                                                     SwipeableEpisodeRowConfigured(
                                                         episode = item.audio.sourceEpisode,
                                                         isPlaybackPlaying = isPlaybackPlaying,
-                                                        onRowClick = {
-//                                                        spirc.load(episode.toOutifyUri())
-                                                        },
+                                                        onRowClick = { viewModel.playEntry(item) },
                                                         startGestures = startGestures,
                                                         endGestures = endGestures,
                                                     )
@@ -602,11 +600,7 @@ fun SharedTransitionScope.QueueBottomSheet(
                                                         track = item.audio.sourceTrack,
                                                         currentAudio = currentTrack,
                                                         isPlaybackPlaying = isPlaybackPlaying,
-                                                        onRowClick = remember(item.audio.uri) {
-                                                            {
-//                                                            spirc.load(album.uri, item.track.uri)
-                                                            }
-                                                        },
+                                                        onRowClick = { viewModel.playEntry(item) },
                                                         isLiked = item.audio.id in likedTracksId,
                                                         onArtistClick = { onArtistClick(it) },
                                                         onArtworkClick = { onArtworkClick(item.audio.sourceTrack!!) }

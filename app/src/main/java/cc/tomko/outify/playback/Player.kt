@@ -222,9 +222,8 @@ class Player @Inject constructor(
 
                 override fun onPlayingStatus(playing: Boolean) {
                     scope.launch {
-                        val changed = stateHolder.state.value.isPlaying != playing
                         stateHolder.setPlaying(playing)
-                        if (changed) invalidateState()
+                        if (publishedPlaying != playing) invalidateState()
                     }
                 }
             }, stateHolder
@@ -270,8 +269,17 @@ class Player @Inject constructor(
         audioFocusManager.setAudioAttributes(PlaybackService.AUDIO_ATTRIBUTES)
     }
 
+    /**
+     * The play state the media session was last given. The UI flips the shared
+     * state before the player confirms, so comparing against it would hide the
+     * confirmation from the notification.
+     */
+    @Volatile
+    private var publishedPlaying = false
+
     override fun getState(): State {
         val ps = stateHolder.state.value
+        publishedPlaying = ps.isPlaying
         val audio = ps.currentAudio ?: return State.Builder()
             .setPlaybackState(STATE_IDLE)
             .setAvailableCommands(determineCommands())

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cc.tomko.outify.core.model.PlayableAudio
 import cc.tomko.outify.core.model.toPlayableAudio
+import cc.tomko.outify.core.model.OutifyUri
 import cc.tomko.outify.core.spirc.QueueTrackDto
 import cc.tomko.outify.core.spirc.SpircWrapper
 import cc.tomko.outify.data.dao.LikedDao
@@ -379,6 +380,35 @@ class QueueViewModel @Inject constructor(
             loadedRange = unloadedPreviousHead.size until (unloadedPreviousHead.size + entries.size)
         )
         viewModelScope.launch { syncQueueToSpirc() }
+    }
+
+    /**
+     * Starts playing [entry] without dropping the rest of the queue.
+     *
+     * Moving the queue position alone does not reload the audio, so the queue
+     * is set with the entry before it as the current track and then skipped
+     * forward onto the entry.
+     */
+    fun playEntry(entry: QueueEntry) {
+        val state = _queueState.value
+        val index = state.tracks.indexOfFirst { it.id == entry.id }
+        if (index < 0 || index == state.currentIndex) return
+
+        val uris = (unloadedPreviousHead.map { it.uri } +
+                state.tracks.map { it.audio.uri } +
+                unloadedNextTail.map { it.uri })
+        val position = unloadedPreviousHead.size + index
+
+        viewModelScope.launch(Dispatchers.IO) {
+            if (position == 0) {
+                // Oldest entry: nothing before it to skip from, so the queue
+                // is replaced by this track.
+                spirc.load(OutifyUri.fromUriString(uris[0]))
+                return@launch
+            }
+            spirc.setQueue(uris.toTypedArray(), uris[position - 1])
+            spirc.playerNext()
+        }
     }
 
     fun debouncedSaveToRepository(entries: List<QueueEntry>) {
