@@ -571,6 +571,33 @@ pub extern "system" fn delete_from_playlist(
     }
 }
 
+#[unsafe(export_name = "Java_cc_tomko_outify_core_SpClient_deletePlaylist")]
+pub extern "system" fn delete_playlist(
+    mut env: JNIEnv,
+    _class: JClass,
+    playlist_id: JString,
+) -> jboolean {
+    let client = get_client();
+
+    let playlist_id: String = match env.get_string(&playlist_id) {
+        Ok(p) => p.into(),
+        Err(e) => {
+            error!("jni get_string failed for delete_playlist id: {e}");
+            return 0 as jboolean;
+        }
+    };
+
+    let rt = crate::network_rt();
+
+    match rt.block_on(async { client.unfollow_playlist(playlist_id).await }) {
+        Ok(_) => 1,
+        Err(e) => {
+            error!("delete_playlist api call failed: {e}");
+            0
+        }
+    }
+}
+
 #[unsafe(export_name = "Java_cc_tomko_outify_core_SpClient_createPlaylist")]
 pub extern "system" fn create_playlist(
     mut env: JNIEnv,

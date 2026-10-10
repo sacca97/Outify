@@ -171,4 +171,36 @@ impl SpotifyClient {
 
         Ok(res.status())
     }
+
+    /// Removes the playlist from the user's library. For a playlist the user
+    /// owns this is what deleting it means: Spotify keeps no deleted ones around.
+    pub async fn unfollow_playlist(
+        &self,
+        playlist_id: String,
+    ) -> Result<StatusCode, SpotifyApiError> {
+        let token = self.load_token().await?;
+        let token = token
+            .ok_or_else(|| SpotifyApiError::Generic("No account token present!".to_string()))?;
+
+        let res = self
+            .client
+            .delete(format!(
+                "{}/v1/playlists/{}/followers",
+                SPOTIFY_API_URL, playlist_id
+            ))
+            .bearer_auth(token.access_token)
+            .timeout(REQUEST_TIMEOUT)
+            .send()
+            .await?;
+
+        if !res.status().is_success() {
+            let status = res.status().as_str().to_string();
+            let body = res.text().await.unwrap_or_default();
+            return Err(SpotifyApiError::Generic(format!(
+                "unfollow_playlist failed with status {status}: {body}"
+            )));
+        }
+
+        Ok(res.status())
+    }
 }

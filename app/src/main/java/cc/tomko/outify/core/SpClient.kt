@@ -121,6 +121,11 @@ class SpClient @Inject constructor() {
     external fun deleteFromPlaylist(playlist_id: String, track_uris: Array<String>): Boolean
 
     /**
+     * Deletes the playlist by given id, removing it from the library.
+     */
+    external fun deletePlaylist(playlistId: String): Boolean
+
+    /**
      * Creates new playlist.
      * For it to be collaborative, public has to be false
      *

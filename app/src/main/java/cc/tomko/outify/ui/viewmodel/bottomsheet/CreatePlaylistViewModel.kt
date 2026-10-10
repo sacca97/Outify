@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import cc.tomko.outify.core.SpClient
 import cc.tomko.outify.data.dao.PlaylistDao
 import cc.tomko.outify.data.database.PlaylistEntity
+import cc.tomko.outify.data.metadata.Metadata
 import cc.tomko.outify.data.repository.LibraryEvents
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -20,10 +21,27 @@ class CreatePlaylistViewModel @Inject constructor(
     private val spClient: SpClient,
     private val playlistDao: PlaylistDao,
     private val libraryEvents: LibraryEvents,
+    private val metadata: Metadata,
 ) : ViewModel() {
 
     private val _result = MutableSharedFlow<Result<String>>(extraBufferCapacity = 1)
     val result: SharedFlow<Result<String>> = _result
+
+    private val _deleted = MutableSharedFlow<Result<String>>(extraBufferCapacity = 1)
+    val deleted: SharedFlow<Result<String>> = _deleted
+
+    fun deletePlaylist(playlistId: String) {
+        viewModelScope.launch {
+            val success = withContext(Dispatchers.IO) { spClient.deletePlaylist(playlistId) }
+            if (!success) {
+                _deleted.tryEmit(Result.failure(RuntimeException("Failed to delete playlist")))
+                return@launch
+            }
+            metadata.removeLikedPlaylist("spotify:playlist:$playlistId")
+            libraryEvents.notifyChanged()
+            _deleted.tryEmit(Result.success(playlistId))
+        }
+    }
 
     fun createPlaylist(
         name: String,

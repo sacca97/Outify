@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -27,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.toShape
@@ -54,6 +56,7 @@ fun CreatePlaylistBottomSheet(
     viewModel: CreatePlaylistViewModel,
     onDismiss: () -> Unit,
     onCreated: (String) -> Unit,
+    onDeleted: (String) -> Unit = {},
     modifier: Modifier = Modifier,
     playlistId: String? = null,
     initialName: String = "",
@@ -71,6 +74,7 @@ fun CreatePlaylistBottomSheet(
     var isPublic by remember(playlistId) { mutableStateOf(initialPublic) }
     var isCollaborative by remember(playlistId) { mutableStateOf(initialCollaborative) }
     var isSaving by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.result.collect { result ->
@@ -89,6 +93,47 @@ fun CreatePlaylistBottomSheet(
                 }
             )
         }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.deleted.collect { result ->
+            isSaving = false
+            result.fold(
+                onSuccess = { id ->
+                    InAppNotificationController.show(context.getString(R.string.toast_playlist_deleted), durationMillis = 2000L)
+                    onDismiss()
+                    onDeleted(id)
+                },
+                onFailure = {
+                    InAppNotificationController.show(context.getString(R.string.error_playlist_delete), durationMillis = 3000L)
+                }
+            )
+        }
+    }
+
+    if (confirmDelete && playlistId != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text(stringResource(R.string.playlist_delete_title)) },
+            text = { Text(stringResource(R.string.playlist_delete_message, initialName)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    isSaving = true
+                    viewModel.deletePlaylist(playlistId)
+                }) {
+                    Text(
+                        stringResource(R.string.common_delete),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+        )
     }
 
     OutifyModalBottomSheet(
@@ -254,6 +299,19 @@ fun CreatePlaylistBottomSheet(
                             isEditMode -> stringResource(R.string.common_save)
                             else -> stringResource(R.string.common_create)
                         }
+                    )
+                }
+            }
+
+            if (isEditMode) {
+                TextButton(
+                    onClick = { confirmDelete = true },
+                    enabled = !isSaving,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        stringResource(R.string.playlist_delete),
+                        color = MaterialTheme.colorScheme.error,
                     )
                 }
             }

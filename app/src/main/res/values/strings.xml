@@ -506,6 +506,11 @@
     <string name="createplaylist_create_title">Create Playlist</string>
     <string name="createplaylist_saving">Saving...</string>
     <string name="createplaylist_creating">Creating...</string>
+    <string name="playlist_delete">Delete playlist</string>
+    <string name="playlist_delete_title">Delete this playlist?</string>
+    <string name="playlist_delete_message">\"%1$s\" will be removed from your library. This cannot be undone.</string>
+    <string name="toast_playlist_deleted">Playlist deleted</string>
+    <string name="error_playlist_delete">Failed to delete the playlist</string>
     <string name="widget_slot_empty">Empty</string>
     <string name="liked_in_liked_songs">In liked songs</string>
     <string name="liked_add_to_liked">Add to liked</string>

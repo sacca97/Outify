@@ -254,6 +254,13 @@ fun GlobalPopupHost(
                         GlobalPopupController.dismiss(popup.id)
                     },
                     onCreated = { },
+                    onDeleted = {
+                        // The playlist's own page has nothing left to show.
+                        val top = backStack.lastOrNull()
+                        if (top is Route.PlaylistScreen && top.playlistUri.endsWith(it)) {
+                            backStack.removeLastOrNull()
+                        }
+                    },
                     playlistId = popup.playlistId,
                     initialName = popup.name,
                     initialDescription = popup.description,
