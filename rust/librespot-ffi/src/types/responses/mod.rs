@@ -13,6 +13,6 @@ pub use artist::*;
 pub use common::*;
 pub use devices::*;
 pub use pagination::Page;
-pub use playlists::CreatePlaylistResponse;
+pub use playlists::{CreatePlaylistResponse, PlaylistVisibility};
 pub use track::*;
 pub use user::CurrentUserResponse;

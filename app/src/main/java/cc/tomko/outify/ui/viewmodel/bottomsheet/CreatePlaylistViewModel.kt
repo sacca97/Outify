@@ -43,6 +43,16 @@ class CreatePlaylistViewModel @Inject constructor(
         }
     }
 
+    /** Whether the playlist is public, or null when that is unknown. */
+    suspend fun loadPublic(playlistId: String): Boolean? = withContext(Dispatchers.IO) {
+        try {
+            spClient.playlistVisibility(playlistId)?.public
+        } catch (e: Exception) {
+            Log.w("CreatePlaylistViewModel", "Failed to load playlist visibility", e)
+            null
+        }
+    }
+
     fun createPlaylist(
         name: String,
         description: String?,
@@ -81,7 +91,7 @@ class CreatePlaylistViewModel @Inject constructor(
         playlistId: String,
         name: String,
         description: String?,
-        isPublic: Boolean,
+        isPublic: Boolean?,
         isCollaborative: Boolean
     ) {
         viewModelScope.launch {

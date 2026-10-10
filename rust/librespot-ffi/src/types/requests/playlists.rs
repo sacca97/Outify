@@ -19,7 +19,9 @@ pub struct RemoveItem {
 #[derive(Serialize)]
 pub struct CreatePlaylistRequest {
     pub name: String,
-    pub public: bool,
+    // Left out to keep the playlist's current visibility
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public: Option<bool>,
     // Public has to be set to false for collaborative to work
     pub collaborative: bool,
     pub description: Option<String>,

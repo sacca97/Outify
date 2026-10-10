@@ -35,6 +35,23 @@ pub fn vec_to_jstring_array(env: &mut jni::JNIEnv, vec: Vec<String>) -> jni::sys
     array.into_raw()
 }
 
+/// Reads a nullable `java.lang.Boolean`.
+pub fn optionable_bool(env: &mut jni::JNIEnv, value: jni::objects::JObject) -> Option<bool> {
+    if value.is_null() {
+        return None;
+    }
+    match env
+        .call_method(&value, "booleanValue", "()Z", &[])
+        .and_then(|v| v.z())
+    {
+        Ok(b) => Some(b),
+        Err(e) => {
+            error!("jni booleanValue failed for optionable_bool: {e}");
+            None
+        }
+    }
+}
+
 pub fn throw_exception(env: &mut jni::JNIEnv, message: String) {
     match env.throw_new("java/lang/IllegalArgumentException", message) {
         Ok(_) => {}

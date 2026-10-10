@@ -93,7 +93,6 @@ sealed class PopupSpec(
         val playlistId: String? = null,
         val name: String = "",
         val description: String = "",
-        val public: Boolean = true,
         val collaborative: Boolean = false,
     ) : PopupSpec(id)
 

@@ -141,6 +141,7 @@ class SpClient @Inject constructor() {
     /**
      * Modifies playlist
      * For it to be collaborative, public has to be false
+     * A null public leaves the visibility unchanged.
      *
      * Returns status code
      */
@@ -148,9 +149,18 @@ class SpClient @Inject constructor() {
         playlistId: String,
         name: String,
         description: String = "",
-        public: Boolean,
+        public: Boolean?,
         collaborative: Boolean
     ): Int
+
+    /**
+     * Returns JSON of the playlist's `public` flag, which is null for a playlist
+     * that is neither public nor private. Null when the request fails.
+     */
+    external fun getPlaylistVisibility(playlistId: String): String?
+
+    fun playlistVisibility(playlistId: String): PlaylistVisibility? =
+        getPlaylistVisibility(playlistId)?.let { Json.decodeFromString(it) }
 
     /**
      * Retrieves the metadata for singular track by its ID
@@ -208,6 +218,9 @@ class SpClientException(
     message: String,
     val error: NativeError
 ) : Exception(message)
+
+@Serializable
+data class PlaylistVisibility(val public: Boolean?)
 
 @Serializable
 data class RadioResult(

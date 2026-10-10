@@ -311,6 +311,8 @@
     <string name="playlist_name">Name</string>
     <string name="playlist_desc_optional">Description (optional)</string>
     <string name="playlist_public">Public</string>
+    <string name="playlist_public_loading">Loading visibility…</string>
+    <string name="playlist_public_unknown">Visibility unavailable, it will stay as it is</string>
     <string name="playlist_collaborative">Collaborative</string>
     <string name="playlist_others">Others can add and remove tracks</string>
     <string name="playlist_add">Add playlist</string>

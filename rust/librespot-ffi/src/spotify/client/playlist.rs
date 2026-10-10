@@ -4,7 +4,7 @@ use crate::{
     spotify::error::SpotifyApiError,
     types::{
         requests::{AddItemRequest, CreatePlaylistRequest, RemoveItem, RemoveItemRequest},
-        responses::CreatePlaylistResponse,
+        responses::{CreatePlaylistResponse, PlaylistVisibility},
     },
 };
 
@@ -97,7 +97,7 @@ impl SpotifyClient {
 
         let body = CreatePlaylistRequest {
             name,
-            public,
+            public: Some(public),
             collaborative,
             description,
         };
@@ -138,7 +138,7 @@ impl SpotifyClient {
         id: String,
         name: String,
         description: Option<String>,
-        public: bool,
+        public: Option<bool>,
         collaborative: bool,
     ) -> Result<StatusCode, SpotifyApiError> {
         let token = self.load_token().await?;
@@ -170,6 +170,28 @@ impl SpotifyClient {
         }
 
         Ok(res.status())
+    }
+
+    pub async fn get_playlist_visibility(
+        &self,
+        playlist_id: String,
+    ) -> Result<PlaylistVisibility, SpotifyApiError> {
+        let token = self.load_token().await?;
+        let token = token
+            .ok_or_else(|| SpotifyApiError::Generic("No account token present!".to_string()))?;
+
+        let res = self
+            .client
+            .get(format!(
+                "{}/v1/playlists/{}?fields=public",
+                SPOTIFY_API_URL, playlist_id
+            ))
+            .bearer_auth(token.access_token)
+            .timeout(REQUEST_TIMEOUT)
+            .send()
+            .await?;
+
+        check_response_json::<PlaylistVisibility>("get_playlist_visibility", res).await
     }
 
     /// Removes the playlist from the user's library. For a playlist the user

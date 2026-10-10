@@ -63,7 +63,6 @@ fun CreatePlaylistBottomSheet(
     playlistId: String? = null,
     initialName: String = "",
     initialDescription: String = "",
-    initialPublic: Boolean = true,
     initialCollaborative: Boolean = false,
 ) {
     val context = LocalContext.current
@@ -73,10 +72,21 @@ fun CreatePlaylistBottomSheet(
 
     var name by remember(playlistId) { mutableStateOf(initialName) }
     var description by remember(playlistId) { mutableStateOf(initialDescription) }
-    var isPublic by remember(playlistId) { mutableStateOf(initialPublic) }
+    // Null while the visibility of an existing playlist is unknown
+    var isPublic by remember(playlistId) { mutableStateOf<Boolean?>(if (isEditMode) null else true) }
+    var visibilityLoaded by remember(playlistId) { mutableStateOf(!isEditMode) }
+    // Visibility is only sent when the user changed it
+    var publicChanged by remember(playlistId) { mutableStateOf(!isEditMode) }
     var isCollaborative by remember(playlistId) { mutableStateOf(initialCollaborative) }
     var isSaving by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+
+    LaunchedEffect(playlistId) {
+        if (playlistId == null) return@LaunchedEffect
+        val loaded = viewModel.loadPublic(playlistId)
+        if (!publicChanged) isPublic = loaded
+        visibilityLoaded = true
+    }
 
     LaunchedEffect(Unit) {
         viewModel.result.collect { result ->
@@ -222,15 +232,23 @@ fun CreatePlaylistBottomSheet(
                             fontWeight = FontWeight.Medium,
                         )
                         Text(
-                            text = if (isPublic) "Anyone can see this playlist" else "Only you can see this playlist",
+                            text = when {
+                                !visibilityLoaded -> stringResource(R.string.playlist_public_loading)
+                                isPublic == null -> stringResource(R.string.playlist_public_unknown)
+                                isPublic == true -> "Anyone can see this playlist"
+                                else -> "Only you can see this playlist"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     Switch(
-                        checked = isPublic,
-                        onCheckedChange = { isPublic = it },
-                        enabled = !isCollaborative,
+                        checked = isPublic == true,
+                        onCheckedChange = {
+                            isPublic = it
+                            publicChanged = true
+                        },
+                        enabled = !isCollaborative && isPublic != null,
                     )
                 }
 
@@ -255,7 +273,10 @@ fun CreatePlaylistBottomSheet(
                         checked = isCollaborative,
                         onCheckedChange = { collaborative ->
                             isCollaborative = collaborative
-                            if (collaborative) isPublic = false
+                            if (collaborative && isPublic != false) {
+                                isPublic = false
+                                publicChanged = true
+                            }
                         },
                     )
                 }
@@ -301,14 +322,14 @@ fun CreatePlaylistBottomSheet(
                                 playlistId = playlistId,
                                 name = name.trim(),
                                 description = description.trim().ifEmpty { "" },
-                                isPublic = isPublic,
+                                isPublic = isPublic.takeIf { publicChanged },
                                 isCollaborative = isCollaborative,
                             )
                         } else {
                             viewModel.createPlaylist(
                                 name = name.trim(),
                                 description = description.trim().ifEmpty { "" },
-                                isPublic = isPublic,
+                                isPublic = isPublic ?: true,
                                 isCollaborative = isCollaborative,
                             )
                         }

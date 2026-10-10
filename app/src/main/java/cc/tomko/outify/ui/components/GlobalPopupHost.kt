@@ -264,7 +264,6 @@ fun GlobalPopupHost(
                     playlistId = popup.playlistId,
                     initialName = popup.name,
                     initialDescription = popup.description,
-                    initialPublic = popup.public,
                     initialCollaborative = popup.collaborative,
                 )
             }

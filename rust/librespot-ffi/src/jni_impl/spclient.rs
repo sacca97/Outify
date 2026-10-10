@@ -7,7 +7,7 @@ use librespot_core::{SpotifyId, SpotifyUri};
 use regex::Regex;
 
 use crate::{
-    jni_utils::{optionable_string, throw_exception, vec_to_jstring_array},
+    jni_utils::{optionable_bool, optionable_string, throw_exception, vec_to_jstring_array},
     outifyuri::{OutifyUri, UsernameCache},
     session::with_session,
     spotify::client::{SavedItemType, get_client},
@@ -598,6 +598,46 @@ pub extern "system" fn delete_playlist(
     }
 }
 
+#[unsafe(export_name = "Java_cc_tomko_outify_core_SpClient_getPlaylistVisibility")]
+pub extern "system" fn get_playlist_visibility(
+    mut env: JNIEnv,
+    _class: JClass,
+    playlist_id: JString,
+) -> jstring {
+    let client = get_client();
+
+    let playlist_id: String = match env.get_string(&playlist_id) {
+        Ok(p) => p.into(),
+        Err(e) => {
+            error!("jni get_string failed for get_playlist_visibility id: {e}");
+            return std::ptr::null_mut();
+        }
+    };
+
+    let rt = crate::network_rt();
+
+    let result = rt.block_on(async { client.get_playlist_visibility(playlist_id).await });
+
+    let visibility = match result {
+        Ok(v) => v,
+        Err(e) => {
+            error!("get_playlist_visibility api call failed: {e}");
+            return std::ptr::null_mut();
+        }
+    };
+
+    match serde_json::to_string(&visibility)
+        .map_err(|e| e.to_string())
+        .and_then(|json| env.new_string(json).map_err(|e| e.to_string()))
+    {
+        Ok(r) => r.into_raw(),
+        Err(e) => {
+            error!("failed to return playlist visibility: {e}");
+            std::ptr::null_mut()
+        }
+    }
+}
+
 #[unsafe(export_name = "Java_cc_tomko_outify_core_SpClient_createPlaylist")]
 pub extern "system" fn create_playlist(
     mut env: JNIEnv,
@@ -651,7 +691,7 @@ pub extern "system" fn modify_playlist(
     playlist_id: JString,
     name: JString,
     description: JString,
-    public: jboolean,
+    public: JObject,
     collaborative: jboolean,
 ) -> jint {
     let client = get_client();
@@ -675,18 +715,13 @@ pub extern "system" fn modify_playlist(
     };
 
     let description = optionable_string(&mut env, description);
+    let public = optionable_bool(&mut env, public);
 
     let rt = crate::network_rt();
 
     let result = rt.block_on(async {
         client
-            .modify_playlist(
-                playlist_id,
-                name,
-                description,
-                public != 0,
-                collaborative != 0,
-            )
+            .modify_playlist(playlist_id, name, description, public, collaborative != 0)
             .await
     });
 
