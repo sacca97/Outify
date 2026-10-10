@@ -4,9 +4,10 @@ set -e
 NDK_VERSION="29.0.13113456"
 REQUIRED_JDK_MAJOR="21"
 
-declare -A ABI_TRIPLE_MAP=(
-    ["arm64-v8a"]="aarch64-linux-android"
-    ["armeabi-v7a"]="armv7-linux-androideabi"
+# "<abi>:<rust target triple>"
+ABI_TARGETS=(
+    "arm64-v8a:aarch64-linux-android"
+    "armeabi-v7a:armv7-linux-androideabi"
 )
 
 PLATFORM_VERSION=21
@@ -38,6 +39,16 @@ find_jdk21() {
                 echo "$candidate"
                 return 0
             fi
+        fi
+    fi
+
+    # macOS
+    if [ -x /usr/libexec/java_home ]; then
+        local candidate
+        candidate=$(/usr/libexec/java_home -v "$REQUIRED_JDK_MAJOR" 2>/dev/null || true)
+        if [ -n "$candidate" ] && [ -x "$candidate/bin/java" ]; then
+            echo "$candidate"
+            return 0
         fi
     fi
 
@@ -95,8 +106,9 @@ echo "Rust toolchain (rust-toolchain.toml):"
 rustup show active-toolchain
 
 # Resolving Android NDK
+ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
 if [ -z "$ANDROID_SDK_ROOT" ]; then
-    echo "ERROR: ANDROID_SDK_ROOT is not set"
+    echo "ERROR: ANDROID_SDK_ROOT (or ANDROID_HOME) is not set"
     exit 1
 fi
 
@@ -111,7 +123,11 @@ if [ ! -d "$ANDROID_NDK" ]; then
 fi
 
 # Toolchain env
-TOOLCHAIN="$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+case "$(uname -s)" in
+    Darwin) HOST_TAG="darwin-x86_64" ;; # universal toolchain, also runs on Apple Silicon
+    *)      HOST_TAG="linux-x86_64" ;;
+esac
+TOOLCHAIN="$ANDROID_NDK/toolchains/llvm/prebuilt/$HOST_TAG/bin"
 export PATH="$TOOLCHAIN:$PATH"
 
 export CC_aarch64_linux_android="$TOOLCHAIN/aarch64-linux-android${PLATFORM_VERSION}-clang"
@@ -129,8 +145,9 @@ echo "Using CC (arm64)  : $CC_aarch64_linux_android"
 echo "Using CC (armv7)  : $CC_armv7_linux_androideabi"
 
 # Building ABIs
-for ABI in "${!ABI_TRIPLE_MAP[@]}"; do
-    TRIPLE=${ABI_TRIPLE_MAP[$ABI]}
+for ENTRY in "${ABI_TARGETS[@]}"; do
+    ABI=${ENTRY%%:*}
+    TRIPLE=${ENTRY#*:}
     echo ""
     echo "▶ Building librespot for $ABI ($TRIPLE) ..."
     cd "$LIBRESPOT_DIR"
