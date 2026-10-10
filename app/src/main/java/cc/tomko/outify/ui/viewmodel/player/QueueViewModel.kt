@@ -107,6 +107,12 @@ class QueueViewModel @Inject constructor(
     private var unloadedPreviousHead: List<QueueTrackDto> = emptyList()
     private var unloadedNextTail: List<QueueTrackDto> = emptyList()
 
+    /**
+     * Whether the loaded list contains the playing track. Without it the list
+     * has no current slot, and its first entry must not be mistaken for one.
+     */
+    private var hasCurrentSlot = false
+
     private var previousLoadJob: Job? = null
     private var nextLoadJob: Job? = null
 
@@ -131,6 +137,7 @@ class QueueViewModel @Inject constructor(
                 allPreviousUris = loadPreviousUris()
                 allNextUris = loadNextUris()
 
+                hasCurrentSlot = currentAudio != null
                 val currentIndex = allPreviousUris.size
                 val total =
                     allPreviousUris.size + (if (currentAudio != null) 1 else 0) + allNextUris.size
@@ -198,7 +205,9 @@ class QueueViewModel @Inject constructor(
 
                 val newEntries = loadAudioInRange(newStartIndex, currentRange.first, currentAudio)
 
-                unloadedPreviousHead = unloadedPreviousHead.drop(newEntries.size)
+                // Based on the range, not on how many entries came back: tracks whose
+                // metadata failed to load are missing from newEntries.
+                unloadedPreviousHead = allPreviousUris.take(newStartIndex)
 
                 _queueState.update { current ->
                     current.copy(
@@ -227,7 +236,7 @@ class QueueViewModel @Inject constructor(
 
                 val newEntries = loadAudioInRange(currentRange.last, newEndIndex, currentAudio)
 
-                unloadedNextTail = unloadedNextTail.drop(newEntries.size)
+                unloadedNextTail = allNextUris.drop(max(0, newEndIndex - allPreviousUris.size - 1))
 
                 _queueState.update { current ->
                     current.copy(
@@ -343,6 +352,7 @@ class QueueViewModel @Inject constructor(
     }
 
     private suspend fun syncQueueToSpirc() = withContext(Dispatchers.IO) {
+        if (!hasCurrentSlot) return@withContext
         val state = _queueState.value
 
         // 6. Map the loaded tracks back into QueueTrackDtos so pagination retains the isQueue flag
@@ -369,6 +379,10 @@ class QueueViewModel @Inject constructor(
         startIndex: Int = _queueState.value.currentIndex
     ) {
         if (entries.isEmpty()) {
+            allPreviousUris = emptyList()
+            allNextUris = emptyList()
+            unloadedPreviousHead = emptyList()
+            unloadedNextTail = emptyList()
             _queueState.value = QueueState()
             return
         }
@@ -392,7 +406,7 @@ class QueueViewModel @Inject constructor(
     fun playEntry(entry: QueueEntry) {
         val state = _queueState.value
         val index = state.tracks.indexOfFirst { it.id == entry.id }
-        if (index < 0 || index == state.currentIndex) return
+        if (!hasCurrentSlot || index < 0 || index == state.currentIndex) return
 
         val uris = (unloadedPreviousHead.map { it.uri } +
                 state.tracks.map { it.audio.uri } +
