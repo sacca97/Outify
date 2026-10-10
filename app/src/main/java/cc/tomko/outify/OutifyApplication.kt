@@ -20,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 const val ALBUM_COVER_URL: String = "https://i.scdn.co/image/"
@@ -77,17 +78,21 @@ class OutifyApplication : Application() {
             val spotifyId = settingsRepository.clientId.firstOrNull() ?: BuildConfig.SPOTIFY_CLIENT_ID
             val spotifySecret = settingsRepository.clientSecret.firstOrNull() ?: BuildConfig.SPOTIFY_CLIENT_SECRET
 
+            // Always initialise the native side: the UI calls into it even before
+            // credentials are set, and they can be entered later in the settings.
+            LibrespotFfi.libInit(applicationContext, spotifyId, spotifySecret)
+
             if (spotifySecret.isEmpty() || spotifyId.isEmpty()) {
-                Toast.makeText(
-                    this@OutifyApplication,
-                    getString(R.string.toast_no_creds),
-                    Toast.LENGTH_LONG
-                ).show()
-                
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@OutifyApplication,
+                        getString(R.string.toast_no_creds),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+
                 return@launch
             }
-
-            LibrespotFfi.libInit(applicationContext, spotifyId, spotifySecret)
 
             spircController.start()
         }
