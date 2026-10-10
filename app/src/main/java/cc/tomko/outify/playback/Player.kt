@@ -418,10 +418,21 @@ class Player @Inject constructor(
         }
     }
 
+    /**
+     * Browsing clients ask to play an item. The session callback starts it
+     * through spirc, so there is no queue to fill here, the player reports
+     * what it plays.
+     */
+    override fun handleSetMediaItems(
+        mediaItems: MutableList<MediaItem>,
+        startIndex: Int,
+        startPositionMs: Long
+    ): ListenableFuture<*> = Futures.immediateVoidFuture()
+
     override fun handlePrepare(): ListenableFuture<*> {
         // Nothing to do: spirc commands are gated on the runtime state, so a
         // prepare arriving during a rebuild is simply dropped.
-        return super.handlePrepare()
+        return Futures.immediateVoidFuture()
     }
 
     public override fun handleRelease(): ListenableFuture<*> {
@@ -446,6 +457,8 @@ class Player @Inject constructor(
             .add(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
             .add(COMMAND_SET_REPEAT_MODE)
             .add(COMMAND_SET_SHUFFLE_MODE)
+            .add(COMMAND_SET_MEDIA_ITEM)
+            .add(COMMAND_CHANGE_MEDIA_ITEMS)
             .add(COMMAND_STOP)
 
         return builder.build()

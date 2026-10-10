@@ -28,6 +28,10 @@
         android:theme="@style/Theme.Material3Expressive"
         android:usesCleartextTraffic="false">
 
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
+
         <service
             android:name=".services.OAuthService"
             android:enabled="true"

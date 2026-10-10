@@ -2,7 +2,9 @@ package cc.tomko.outify.services
 
 import android.content.Context
 import android.os.Bundle
+import android.util.Log
 import androidx.core.net.toUri
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MediaMetadata.MEDIA_TYPE_MUSIC
@@ -20,25 +22,42 @@ import cc.tomko.outify.core.SpClient
 import cc.tomko.outify.core.model.CoverSize
 import cc.tomko.outify.core.model.Track
 import cc.tomko.outify.core.model.getCover
+import cc.tomko.outify.core.model.OutifyUri
 import cc.tomko.outify.core.spirc.SpircController
+import cc.tomko.outify.core.spirc.SpircWrapper
+import cc.tomko.outify.data.metadata.Metadata
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import dagger.hilt.android.qualifiers.ApplicationContext
 import jakarta.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.coroutineScope
 
 @UnstableApi
 class MediaLibrarySessionCallback @Inject constructor(
     @ApplicationContext private val context: Context,
     private val spClient: SpClient,
     private val spircController: SpircController,
+    private val spirc: SpircWrapper,
+    private val metadata: Metadata,
 ) : MediaLibraryService.MediaLibrarySession.Callback {
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    /** Browsing reads the database and the network, so it must stay off the main thread. */
+    private val browseScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     lateinit var service: PlaybackService
     var toggleLike: () -> Unit = {}
@@ -67,8 +86,12 @@ class MediaLibrarySessionCallback @Inject constructor(
         controller: MediaSession.ControllerInfo,
         isForPlayback: Boolean
     ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
-        scope.launch {
-            spircController.restart()
+        // A play request on a session without items lands here too, such as right
+        // after a browsed track was started. Only a runtime that is down needs a restart.
+        if (!spirc.isUsable) {
+            scope.launch {
+                spircController.restart()
+            }
         }
         return super.onPlaybackResumption(mediaSession, controller, isForPlayback)
     }
@@ -92,26 +115,8 @@ class MediaLibrarySessionCallback @Inject constructor(
         browser: MediaSession.ControllerInfo,
         params: MediaLibraryService.LibraryParams?
     ): ListenableFuture<LibraryResult<MediaItem>> {
-        val rootItem = MediaItem.Builder()
-            .setMediaId(PlaybackService.ROOT)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setIsPlayable(false)
-                    .setIsBrowsable(true)
-                    .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
-                    .setTitle("Outify")
-                    .build()
-            )
-            .build()
-
-        val libraryParams = MediaLibraryService.LibraryParams.Builder()
-            .setExtras(Bundle().apply {
-                putBoolean("androidx.media3.session.LIBRARY_PARAM_KEY_RECENT", true)
-                putBoolean("androidx.media3.session.LIBRARY_PARAM_KEY_OFFLINE", false)
-            })
-            .build()
-
-        return Futures.immediateFuture(LibraryResult.ofItem(rootItem, libraryParams))
+        val rootItem = folder(PlaybackService.ROOT, "Outify")
+        return Futures.immediateFuture(LibraryResult.ofItem(rootItem, params))
     }
 
     override fun onGetChildren(
@@ -121,17 +126,34 @@ class MediaLibrarySessionCallback @Inject constructor(
         page: Int,
         pageSize: Int,
         params: MediaLibraryService.LibraryParams?
-    ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
-        val children = when (parentId) {
-            PlaybackService.ROOT -> getRootChildren()
-            PlaybackService.PLAYLIST -> getPlaylists()
-            PlaybackService.LIKED -> getLikedTracks()
-            PlaybackService.ARTIST -> getTopArtists()
-            PlaybackService.RECENT -> getRecentTracks()
-            else -> emptyList()
+    ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = browseScope.future {
+        val children = try {
+            when {
+                parentId == PlaybackService.ROOT -> getRootChildren()
+                parentId == PlaybackService.LIKED -> getLikedTracks(page, pageSize)
+                parentId == PlaybackService.PLAYLIST -> getPlaylists(page, pageSize)
+                parentId == PlaybackService.ALBUM -> getAlbums(page, pageSize)
+                parentId.startsWith("${PlaybackService.PLAYLIST}:") ->
+                    getContextTracks(parentId, page, pageSize) {
+                        metadata.getPlaylistMetadata(it, allowCached = true)
+                            ?.contents?.map { item -> item.uri }
+                    }
+
+                parentId.startsWith("${PlaybackService.ALBUM}:") ->
+                    getContextTracks(parentId, page, pageSize) {
+                        metadata.getAlbumMetadata(it)?.tracks
+                    }
+
+                else -> emptyList()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to browse $parentId", e)
+            return@future LibraryResult.ofError<ImmutableList<MediaItem>>(SessionError.ERROR_UNKNOWN)
         }
 
-        return Futures.immediateFuture(LibraryResult.ofItemList(children, params))
+        LibraryResult.ofItemList(children, params)
     }
 
     override fun onGetItem(
@@ -147,152 +169,168 @@ class MediaLibrarySessionCallback @Inject constructor(
         }
     }
 
+    /**
+     * A browsed track carries the context it was listed in, so playing it plays
+     * on from there. Spotify's player queues the rest, nothing is queued here.
+     */
+    override fun onSetMediaItems(
+        mediaSession: MediaSession,
+        controller: MediaSession.ControllerInfo,
+        mediaItems: List<MediaItem>,
+        startIndex: Int,
+        startPositionMs: Long
+    ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+        val requested = mediaItems.getOrNull(startIndex.coerceAtLeast(0)) ?: mediaItems.firstOrNull()
+        val (context, track) = requested?.let { parsePlayId(it.mediaId) } ?: (null to null)
+        if (track != null) {
+            scope.launch(Dispatchers.IO) {
+                // A car connecting while the app is still starting asks before the session is up.
+                withTimeoutOrNull(READY_TIMEOUT_MS) { spirc.isUsableFlow.first { it } }
+                spirc.load(context, OutifyUri.fromUriString(track))
+            }
+        } else {
+            Log.w(TAG, "Don't know how to play ${requested?.mediaId}")
+        }
+
+        // The Spotify player reports what it plays, the session has no queue of its own.
+        return Futures.immediateFuture(
+            MediaSession.MediaItemsWithStartPosition(emptyList(), C.INDEX_UNSET, C.TIME_UNSET)
+        )
+    }
+
     private fun getRootChildren(): List<MediaItem> = listOf(
-        MediaItem.Builder()
-            .setMediaId(PlaybackService.RECENT)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setIsPlayable(false)
-                    .setIsBrowsable(true)
-                    .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
-                    .setTitle(context.getString(R.string.media_recently_played))
-                    .build()
-            )
-            .build(),
-        MediaItem.Builder()
-            .setMediaId(PlaybackService.LIKED)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setIsPlayable(false)
-                    .setIsBrowsable(true)
-                    .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
-                    .setTitle(context.getString(R.string.common_liked_songs))
-                    .build()
-            )
-            .build(),
-        MediaItem.Builder()
-            .setMediaId(PlaybackService.PLAYLIST)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setIsPlayable(false)
-                    .setIsBrowsable(true)
-                    .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
-                    .setTitle(context.getString(R.string.search_section_playlists))
-                    .build()
-            )
-            .build(),
-        MediaItem.Builder()
-            .setMediaId(PlaybackService.ARTIST)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setIsPlayable(false)
-                    .setIsBrowsable(true)
-                    .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
-                    .setTitle(context.getString(R.string.homescreen_top_artists))
-                    .build()
-            )
-            .build(),
+        folder(PlaybackService.LIKED, context.getString(R.string.common_liked_songs)),
+        folder(PlaybackService.PLAYLIST, context.getString(R.string.search_section_playlists)),
+        folder(PlaybackService.ALBUM, context.getString(R.string.search_section_albums)),
     )
 
-    private fun getLikedTracks(): List<MediaItem> {
-        return try {
-            val result = spClient.getUserCollection("tracks") ?: return emptyList()
-            parseTracksFromSearchResult(result)
-        } catch (e: Exception) {
-            emptyList()
-        }
+    private suspend fun getLikedTracks(page: Int, pageSize: Int): List<MediaItem> {
+        val uris = metadata.getLikedUris().pageOf(page, pageSize)
+        return tracksOf(uris).map { it.toMediaItem(PlaybackService.LIKED) }
     }
 
-    private fun getRecentTracks(): List<MediaItem> {
-        return try {
-            val result = spClient.getUserCollection("recent") ?: return emptyList()
-            parseTracksFromSearchResult(result)
-        } catch (e: Exception) {
-            emptyList()
-        }
+    private suspend fun getContextTracks(
+        parentId: String,
+        page: Int,
+        pageSize: Int,
+        trackUris: suspend (contextUri: String) -> List<String>?,
+    ): List<MediaItem> {
+        val contextUri = contextUriOf(parentId)
+        val uris = (trackUris(contextUri) ?: return emptyList())
+            .filter { it.startsWith(TRACK_PREFIX) }
+            .pageOf(page, pageSize)
+        return tracksOf(uris).map { it.toMediaItem(contextUri) }
     }
 
-    private fun getPlaylists(): List<MediaItem> {
-        return try {
-            val rootlist = spClient.getRootlist() ?: return emptyList()
-            rootlist.mapIndexed { index, uri ->
-                val parts = uri.removePrefix("spotify:playlist:").split(":")
-                val playlistId = if (parts.isNotEmpty()) parts[0] else uri
+    private suspend fun tracksOf(uris: List<String>): List<Track> {
+        val byUri = metadata.getTrackMetadata(uris).associateBy { it.uri }
+        return uris.mapNotNull { byUri[it] }
+    }
 
-                MediaItem.Builder()
-                    .setMediaId("playlist:$playlistId")
-                    .setMediaMetadata(
-                        MediaMetadata.Builder()
-                            .setIsPlayable(false)
-                            .setIsBrowsable(true)
-                            .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
-                            .setTitle(context.getString(R.string.playlist_number, index + 1))
-                            .build()
+    private suspend fun getPlaylists(page: Int, pageSize: Int): List<MediaItem> {
+        val uris = metadata.getPlaylistUris()
+            .filter { it.startsWith("spotify:playlist:") }
+            .pageOf(page, pageSize)
+
+        // Playlists never opened are not cached yet, a few at a time keeps this quick.
+        val limit = Semaphore(PLAYLIST_FETCHES)
+        return coroutineScope {
+            uris.map { uri ->
+                async {
+                    val playlist = limit.withPermit {
+                        runCatching { metadata.getPlaylistMetadata(uri, allowCached = true) }.getOrNull()
+                    } ?: return@async null
+                    folder(
+                        mediaId = "${PlaybackService.PLAYLIST}:${playlist.id}",
+                        title = playlist.attributes.name,
+                        artworkUrl = runCatching { playlist.getCover(metadata, CoverSize.MEDIUM) }.getOrNull(),
                     )
-                    .build()
-            }
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
-
-    private fun getTopArtists(): List<MediaItem> {
-        return try {
-            val result = spClient.getUserTop("artists") ?: return emptyList()
-            parseArtistsFromResult(result)
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
-
-    private fun parseTracksFromSearchResult(json: String): List<MediaItem> {
-        return try {
-            val trackIds = extractTrackIds(json)
-            trackIds.mapNotNull { trackId ->
-                try {
-                    val trackJson = spClient.getTrackData(trackId) ?: return emptyList()
-                    val track = kotlinx.serialization.json.Json.decodeFromString<Track>(trackJson)
-                    track.toMediaItem()
-                } catch (e: Exception) {
-                    null
                 }
-            }
-        } catch (e: Exception) {
-            emptyList()
+            }.awaitAll().filterNotNull()
         }
     }
 
-    private fun parseArtistsFromResult(json: String): List<MediaItem> {
-        return try {
-            val regex = Regex("""spotify:artist:([a-zA-Z0-9]+)""")
-            regex.findAll(json).map { match ->
-                val artistId = match.groupValues[1]
-                MediaItem.Builder()
-                    .setMediaId("artist:$artistId")
-                    .setMediaMetadata(
-                        MediaMetadata.Builder()
-                            .setIsPlayable(false)
-                            .setIsBrowsable(true)
-                            .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
-                            .setTitle(context.getString(R.string.common_artist))
-                            .build()
+    private suspend fun getAlbums(page: Int, pageSize: Int): List<MediaItem> {
+        val uris = spClient.getSavedItems(SpClient.ALBUMS)
+            .split(",")
+            .filter { it.startsWith("spotify:album:") }
+            .pageOf(page, pageSize)
+
+        val limit = Semaphore(PLAYLIST_FETCHES)
+        return coroutineScope {
+            uris.map { uri ->
+                async {
+                    val album = limit.withPermit {
+                        runCatching { metadata.getAlbumMetadata(uri) }.getOrNull()
+                    } ?: return@async null
+                    folder(
+                        mediaId = "${PlaybackService.ALBUM}:${album.id}",
+                        title = album.name,
+                        subtitle = album.artists.joinToString { it.name },
+                        artworkUrl = album.getCover(CoverSize.LARGE)?.let { ALBUM_COVER_URL + it.uri },
                     )
-                    .build()
-            }.toList()
-        } catch (e: Exception) {
-            emptyList()
+                }
+            }.awaitAll().filterNotNull()
         }
     }
 
-    private fun extractTrackIds(json: String): List<String> {
-        val regex = Regex("""spotify:track:([a-zA-Z0-9]+)""")
-        return regex.findAll(json).map { it.groupValues[1] }.toList()
+    private fun folder(
+        mediaId: String,
+        title: String,
+        subtitle: String? = null,
+        artworkUrl: String? = null,
+    ): MediaItem = MediaItem.Builder()
+        .setMediaId(mediaId)
+        .setMediaMetadata(
+            MediaMetadata.Builder()
+                .setIsPlayable(false)
+                .setIsBrowsable(true)
+                .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
+                .setTitle(title)
+                .setSubtitle(subtitle)
+                .setArtworkUri(artworkUrl?.toUri())
+                .build()
+        )
+        .build()
+
+    private companion object {
+        const val TAG = "MediaLibrary"
+        const val TRACK_PREFIX = "spotify:track:"
+        const val PLAY_PREFIX = "play|"
+        const val PLAYLIST_FETCHES = 6
+        const val READY_TIMEOUT_MS = 20_000L
+
+        /** Page `page` of `pageSize` items, the whole list for an unbounded size. */
+        fun <T> List<T>.pageOf(page: Int, pageSize: Int): List<T> {
+            val size = pageSize.coerceIn(1, MAX_PAGE_SIZE)
+            return drop(page * size).take(size)
+        }
+
+        const val MAX_PAGE_SIZE = 100
+
+        /** `playlist:<id>` or `album:<id>` as the Spotify URI of that context. */
+        fun contextUriOf(folderId: String): String {
+            val (kind, id) = folderId.split(":", limit = 2)
+            return "spotify:$kind:$id"
+        }
+
+        /** The context and the track out of an id made by [toMediaItem], context null for liked songs. */
+        fun parsePlayId(mediaId: String): Pair<OutifyUri?, String?> {
+            if (!mediaId.startsWith(PLAY_PREFIX)) return null to null
+            val (context, track) = mediaId.removePrefix(PLAY_PREFIX).split("|", limit = 2)
+            val contextUri = if (context == PlaybackService.LIKED) {
+                OutifyUri.Liked
+            } else {
+                OutifyUri.fromUriString(context)
+            }
+            return contextUri to track
+        }
     }
 }
 
-private fun Track.toMediaItem(isPlayable: Boolean = true, isBrowsable: Boolean = false) =
+private fun Track.toMediaItem(context: String, isPlayable: Boolean = true, isBrowsable: Boolean = false) =
     MediaItem.Builder()
-        .setMediaId(id)
+        .setMediaId("play|$context|$uri")
         .setUri(uri)
         .setMediaMetadata(
             MediaMetadata.Builder()
