@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -65,7 +67,7 @@ fun CreatePlaylistBottomSheet(
     initialCollaborative: Boolean = false,
 ) {
     val context = LocalContext.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val coroutineScope = rememberCoroutineScope()
     val isEditMode = playlistId != null
 
@@ -152,105 +154,127 @@ fun CreatePlaylistBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
+                .imePadding()
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
+            // The fields scroll, the buttons stay in reach below them.
+            Column(
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.PlaylistAdd,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .clip(MaterialShapes.Cookie9Sided.toShape())
-                        .background(MaterialTheme.colorScheme.secondaryContainer)
-                        .padding(12.dp)
-                        .size(20.dp)
-                )
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Text(
-                    text = if (isEditMode) stringResource(R.string.createplaylist_edit_title) else stringResource(R.string.createplaylist_create_title),
-                    style = MaterialTheme.typography.headlineMediumEmphasized,
-                    fontWeight = FontWeight.Black,
-                )
-            }
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text(stringResource(R.string.playlist_name)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            OutlinedTextField(
-                value = description,
-                onValueChange = { description = it },
-                label = { Text(stringResource(R.string.playlist_desc_optional)) },
-                maxLines = 3,
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column {
-                    Text(
-                        text = stringResource(R.string.playlist_public),
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.PlaylistAdd,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .clip(MaterialShapes.Cookie9Sided.toShape())
+                            .background(MaterialTheme.colorScheme.secondaryContainer)
+                            .padding(12.dp)
+                            .size(20.dp)
                     )
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
                     Text(
-                        text = if (isPublic) "Anyone can see this playlist" else "Only you can see this playlist",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        text = if (isEditMode) stringResource(R.string.createplaylist_edit_title) else stringResource(R.string.createplaylist_create_title),
+                        style = MaterialTheme.typography.headlineMediumEmphasized,
+                        fontWeight = FontWeight.Black,
                     )
                 }
-                Switch(
-                    checked = isPublic,
-                    onCheckedChange = { isPublic = it },
-                    enabled = !isCollaborative,
-                )
-            }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column {
-                    Text(
-                        text = stringResource(R.string.playlist_collaborative),
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium,
-                    )
-                    Text(
-                        text = stringResource(R.string.playlist_others),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(stringResource(R.string.playlist_name)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text(stringResource(R.string.playlist_desc_optional)) },
+                    maxLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column {
+                        Text(
+                            text = stringResource(R.string.playlist_public),
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            text = if (isPublic) "Anyone can see this playlist" else "Only you can see this playlist",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = isPublic,
+                        onCheckedChange = { isPublic = it },
+                        enabled = !isCollaborative,
                     )
                 }
-                Switch(
-                    checked = isCollaborative,
-                    onCheckedChange = { collaborative ->
-                        isCollaborative = collaborative
-                        if (collaborative) isPublic = false
-                    },
-                )
-            }
 
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column {
+                        Text(
+                            text = stringResource(R.string.playlist_collaborative),
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            text = stringResource(R.string.playlist_others),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = isCollaborative,
+                        onCheckedChange = { collaborative ->
+                            isCollaborative = collaborative
+                            if (collaborative) isPublic = false
+                        },
+                    )
+                }
+
+                if (isEditMode) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    TextButton(
+                        onClick = { confirmDelete = true },
+                        enabled = !isSaving,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            stringResource(R.string.playlist_delete),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -299,19 +323,6 @@ fun CreatePlaylistBottomSheet(
                             isEditMode -> stringResource(R.string.common_save)
                             else -> stringResource(R.string.common_create)
                         }
-                    )
-                }
-            }
-
-            if (isEditMode) {
-                TextButton(
-                    onClick = { confirmDelete = true },
-                    enabled = !isSaving,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        stringResource(R.string.playlist_delete),
-                        color = MaterialTheme.colorScheme.error,
                     )
                 }
             }
