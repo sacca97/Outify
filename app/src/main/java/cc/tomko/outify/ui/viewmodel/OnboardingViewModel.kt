@@ -4,11 +4,11 @@ import android.content.Context
 import android.content.Intent
 import android.widget.Toast
 import androidx.core.net.toUri
-import cc.tomko.outify.R
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cc.tomko.outify.BuildConfig
 import cc.tomko.outify.LibrespotFfi
+import cc.tomko.outify.R
 import cc.tomko.outify.core.AuthCallbackServerManager
 import cc.tomko.outify.core.AuthManager
 import cc.tomko.outify.core.AuthStateEvent
@@ -32,6 +32,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
+
+/** A saved client ID wins over the one from the build, even when it is empty. */
+internal fun isClientIdAvailable(saved: String?, bundled: String): Boolean =
+    (saved ?: bundled).isNotEmpty()
 
 /**
  * Which login a given onboarding step needs.
@@ -72,7 +76,7 @@ class OnboardingViewModel @Inject constructor(
      * The login uses PKCE, so no client secret is needed.
      */
     val hasClientId: StateFlow<Boolean> = settingsRepository.clientId
-        .map { !(it ?: BuildConfig.SPOTIFY_CLIENT_ID).isEmpty() }
+        .map { isClientIdAvailable(it, BuildConfig.SPOTIFY_CLIENT_ID) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     init {
@@ -148,10 +152,11 @@ class OnboardingViewModel @Inject constructor(
     fun startAccountAuth(context: Context, clientId: String = "") {
         viewModelScope.launch {
             if (clientId.isNotBlank()) {
+                val id = clientId.trim()
                 val secret = settingsRepository.clientSecret.firstOrNull() ?: BuildConfig.SPOTIFY_CLIENT_SECRET
-                settingsRepository.setClientId(clientId.trim())
+                settingsRepository.setClientId(id)
                 withContext(Dispatchers.IO) {
-                    LibrespotFfi.updateClientCredentials(clientId.trim(), secret)
+                    LibrespotFfi.updateClientCredentials(id, secret)
                 }
             }
 

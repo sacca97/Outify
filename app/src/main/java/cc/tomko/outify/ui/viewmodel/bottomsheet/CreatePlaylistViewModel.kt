@@ -38,6 +38,8 @@ class CreatePlaylistViewModel @Inject constructor(
                 return@launch
             }
             metadata.removeLikedPlaylist("spotify:playlist:$playlistId")
+            playlistDao.deleteItems(playlistId)
+            playlistDao.deletePlaylist(playlistId)
             libraryEvents.notifyChanged()
             _deleted.tryEmit(Result.success(playlistId))
         }

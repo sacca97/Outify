@@ -40,7 +40,11 @@ fn record_position(position_ms: u32) {
 fn estimated_position() -> u32 {
     let since_report = LAST_POSITION_AT
         .get()
-        .map(|at| at.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).elapsed())
+        .map(|at| {
+            at.lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .elapsed()
+        })
         .unwrap_or_default();
     LAST_POSITION
         .load(Ordering::Relaxed)
@@ -471,24 +475,6 @@ impl SpircRuntime {
             .and_then(|_| self.spirc.repeat_track(repeat_track))
     }
 
-    pub async fn prev_tracks(
-        &self,
-    ) -> Result<Vec<(librespot_protocol::player::ProvidedTrack, bool)>, librespot_core::Error> {
-        self.spirc
-            .prev_tracks()
-            .await
-            .ok_or_else(|| librespot_core::Error::internal("Spirc task not available"))
-    }
-
-    pub async fn next_tracks(
-        &self,
-    ) -> Result<Vec<(librespot_protocol::player::ProvidedTrack, bool)>, librespot_core::Error> {
-        self.spirc
-            .next_tracks()
-            .await
-            .ok_or_else(|| librespot_core::Error::internal("Spirc task not available"))
-    }
-
     // Resumes last played context after Spirc shutdown
     pub fn resume_playback(&self) {
         let context = match CURRENT_CONTEXT.get() {
@@ -630,12 +616,15 @@ fn arm_command_ack(generation: u64, label: &'static str) {
 
 /// Clears the pending-command marker once the runtime proves it is responsive.
 fn clear_command_ack() {
-    if let Some(mutex) = PENDING_COMMAND.get() {
-        if let Ok(mut guard) = mutex.lock() {
-            if let Some(p) = guard.take() {
-                debug!("{} acknowledged after {}ms", p.label, p.armed_at.elapsed().as_millis());
-            }
-        }
+    if let Some(mutex) = PENDING_COMMAND.get()
+        && let Ok(mut guard) = mutex.lock()
+        && let Some(p) = guard.take()
+    {
+        debug!(
+            "{} acknowledged after {}ms",
+            p.label,
+            p.armed_at.elapsed().as_millis()
+        );
     }
 }
 
@@ -1193,6 +1182,16 @@ mod tests {
     use super::*;
     use librespot_core::SpotifyId;
 
+    /// The pending command is a process-wide static, so the tests that arm or
+    /// read it must not interleave.
+    static PENDING_COMMAND_TESTS: Mutex<()> = Mutex::new(());
+
+    fn serialize_pending_command_tests() -> std::sync::MutexGuard<'static, ()> {
+        PENDING_COMMAND_TESTS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     fn every_state_round_trips_through_its_encoding() {
         let states = [
@@ -1274,6 +1273,7 @@ mod tests {
 
     #[test]
     fn pending_command_ack_is_cleared_by_a_responsive_player_event() {
+        let _serial = serialize_pending_command_tests();
         PENDING_COMMAND.get_or_init(|| Mutex::new(None));
 
         arm_command_ack(1, "play");
@@ -1302,6 +1302,7 @@ mod tests {
 
     #[test]
     fn pending_command_ack_expires_after_its_timeout() {
+        let _serial = serialize_pending_command_tests();
         PENDING_COMMAND.get_or_init(|| Mutex::new(None));
 
         arm_command_ack(1, "play");
@@ -1324,10 +1325,14 @@ mod tests {
         // A pending command from an older generation must never affect the
         // current runtime.
         assert_eq!(pending_command_expired(2), None);
+
+        // Leave nothing armed for the tests that read the tracker afterwards.
+        clear_command_ack();
     }
 
     #[test]
     fn watchdog_reports_no_liveness_without_a_runtime() {
+        let _serial = serialize_pending_command_tests();
         // No watchdog runs in a unit test, so nothing is alive.
         assert!(!task_alive(), "no task can be alive without a runtime");
         // No pending command may be reported as armed: either the tracker was

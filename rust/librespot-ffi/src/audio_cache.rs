@@ -5,7 +5,7 @@
 //! outage, so everything older is dropped after each track change.
 
 use std::{
-    fs,
+    fs, io,
     path::{Path, PathBuf},
     thread,
     time::SystemTime,
@@ -33,7 +33,8 @@ pub fn track_started(audio_item: &AudioItem) {
         .values()
         .map(|file_id| {
             let name = file_id.to_base16();
-            dir.join(&name[..FOLDER_NAME_LEN]).join(&name[FOLDER_NAME_LEN..])
+            dir.join(&name[..FOLDER_NAME_LEN])
+                .join(&name[FOLDER_NAME_LEN..])
         })
         .collect();
     let dir = dir.clone();
@@ -61,10 +62,12 @@ fn prune(dir: &Path, keep: usize) {
         return;
     }
 
-    files.sort_by(|a, b| b.1.cmp(&a.1));
+    files.sort_by_key(|(_, modified)| std::cmp::Reverse(*modified));
     for (path, _) in files.into_iter().skip(keep) {
         match fs::remove_file(&path) {
             Ok(()) => debug!("dropped cached audio {}", path.display()),
+            // Another pass or the player got there first.
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => warn!("cannot drop cached audio {}: {e}", path.display()),
         }
     }
@@ -84,8 +87,11 @@ fn cached_files(dir: &Path) -> Vec<(PathBuf, SystemTime)> {
         .flat_map(|files| files.flatten())
         .filter(|file| is_hex(&file.file_name().to_string_lossy(), FILE_NAME_LEN))
         .filter_map(|file| {
-            let modified = file.metadata().ok()?.modified().ok()?;
-            Some((file.path(), modified))
+            let metadata = file.metadata().ok()?;
+            if !metadata.is_file() {
+                return None;
+            }
+            Some((file.path(), metadata.modified().ok()?))
         })
         .collect()
 }
@@ -101,7 +107,8 @@ mod tests {
     use super::*;
 
     fn scratch_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("outify-audio-cache-{name}"));
+        let dir =
+            std::env::temp_dir().join(format!("outify-audio-cache-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -162,5 +169,58 @@ mod tests {
 
         assert!(replayed.exists());
         assert!(!dir.join("04").join("a".repeat(FILE_NAME_LEN)).exists());
+    }
+
+    #[test]
+    fn missing_directory_is_not_an_error() {
+        let dir = scratch_dir("missing");
+        fs::remove_dir_all(&dir).unwrap();
+
+        prune(&dir, 3);
+
+        assert!(cached_files(&dir).is_empty());
+        touch(&dir.join("01").join("a".repeat(FILE_NAME_LEN)));
+    }
+
+    #[test]
+    fn odd_names_are_ignored() {
+        let dir = scratch_dir("odd");
+        let right_length_not_hex = "g".repeat(FILE_NAME_LEN);
+        for folder in ["zz", "001", "0"] {
+            let path = dir.join(folder).join("a".repeat(FILE_NAME_LEN));
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, b"x").unwrap();
+        }
+        let not_hex = dir.join("01").join(&right_length_not_hex);
+        fs::create_dir_all(not_hex.parent().unwrap()).unwrap();
+        fs::write(&not_hex, b"x").unwrap();
+        // A file where a folder is expected, and a folder where a file is expected.
+        fs::write(dir.join("02"), b"x").unwrap();
+        fs::create_dir_all(dir.join("03").join("b".repeat(FILE_NAME_LEN))).unwrap();
+
+        assert!(cached_files(&dir).is_empty());
+        prune(&dir, 0);
+
+        assert!(not_hex.exists());
+        assert!(dir.join("03").join("b".repeat(FILE_NAME_LEN)).exists());
+    }
+
+    #[test]
+    fn nothing_is_removed_within_the_limit() {
+        let dir = scratch_dir("within-limit");
+        let files = [cache_file(&dir, "01", 10), cache_file(&dir, "02", 20)];
+
+        prune(&dir, 3);
+
+        assert!(files.iter().all(|f| f.exists()));
+    }
+
+    #[test]
+    fn hex_names_need_the_exact_length() {
+        assert!(is_hex("0aF9", 4));
+        assert!(!is_hex("0aF", 4));
+        assert!(!is_hex("0aF99", 4));
+        assert!(!is_hex("0aFg", 4));
+        assert!(!is_hex("", FOLDER_NAME_LEN));
     }
 }

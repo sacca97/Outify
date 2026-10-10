@@ -26,3 +26,32 @@ pub struct CreatePlaylistRequest {
     pub collaborative: bool,
     pub description: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(public: Option<bool>) -> serde_json::Value {
+        serde_json::to_value(CreatePlaylistRequest {
+            name: "Mix".to_string(),
+            public,
+            collaborative: false,
+            description: None,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn public_is_left_out_to_keep_the_current_visibility() {
+        let body = request(None);
+        assert!(body.get("public").is_none());
+        assert_eq!(body["name"], "Mix");
+        assert_eq!(body["collaborative"], false);
+    }
+
+    #[test]
+    fn public_is_sent_when_set() {
+        assert_eq!(request(Some(true))["public"], true);
+        assert_eq!(request(Some(false))["public"], false);
+    }
+}

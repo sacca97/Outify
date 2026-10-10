@@ -48,7 +48,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
-import cc.tomko.outify.ui.components.bottomsheet.OutifyModalBottomSheet
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -78,6 +77,7 @@ import cc.tomko.outify.MyIcons
 import cc.tomko.outify.R
 import cc.tomko.outify.core.model.Artist
 import cc.tomko.outify.core.model.Track
+import cc.tomko.outify.ui.components.bottomsheet.OutifyModalBottomSheet
 import cc.tomko.outify.ui.components.rows.SwipeGesture
 import cc.tomko.outify.ui.components.rows.SwipeableEpisodeRowConfigured
 import cc.tomko.outify.ui.components.rows.SwipeableTrackRowConfigured

@@ -20,13 +20,14 @@ import cc.tomko.outify.MediaSessionConstants
 import cc.tomko.outify.R
 import cc.tomko.outify.core.SpClient
 import cc.tomko.outify.core.model.CoverSize
-import cc.tomko.outify.core.model.Track
 import cc.tomko.outify.core.model.OutifyUri
+import cc.tomko.outify.core.model.Track
 import cc.tomko.outify.core.model.getCover
 import cc.tomko.outify.core.model.toPlayableAudio
 import cc.tomko.outify.core.spirc.SpircController
 import cc.tomko.outify.core.spirc.SpircWrapper
 import cc.tomko.outify.data.dao.PlaylistDao
+import cc.tomko.outify.data.database.PlaylistEntity
 import cc.tomko.outify.data.metadata.Metadata
 import cc.tomko.outify.data.repository.LikedRepository
 import cc.tomko.outify.data.repository.SettingsRepository
@@ -42,13 +43,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -74,6 +75,12 @@ class MediaLibrarySessionCallback @Inject constructor(
     var toggleLike: () -> Unit = {}
     var toggleStartRadio: () -> Unit = {}
     var toggleRepeatMode: () -> Unit = {}
+
+    /** Stops pending work, the service calls this when it is destroyed. */
+    fun release() {
+        scope.cancel()
+        browseScope.cancel()
+    }
 
     override fun onConnect(
         session: MediaSession,
@@ -105,40 +112,41 @@ class MediaLibrarySessionCallback @Inject constructor(
             scope.launch { spircController.restart() }
         }
 
-        val last = lastPlayed()
+        val (last, track) = lastPlayed()
             ?: throw UnsupportedOperationException("Nothing was played yet")
 
-        if (playbackStateHolder.state.value.currentAudio == null) {
-            // Shown paused, nothing plays until the car asks for it.
-            playbackStateHolder.seekTo(last.positionMs.milliseconds)
-            playbackStateHolder.updatePosition(last.positionMs)
-            playbackStateHolder.setAudio(last.track.toPlayableAudio())
-        }
+        if (playbackStateHolder.state.value.currentAudio == null) showPaused(last, track)
 
         if (isForPlayback) {
             waitUntilReady()
             val playing = playbackStateHolder.state.value.currentAudio?.uri
-            // A player that still holds the track only needs to go on, which the session does.
-            if (playing != last.track.uri || !spirc.isUsable) {
-                spirc.load(last.context, OutifyUri.fromUriString(last.track.uri))
-                seekOnceLoaded(last.track.uri, last.positionMs)
+            if (needsLoad(playing, last.trackUri, spirc.isUsable)) {
+                spirc.load(last.context, OutifyUri.fromUriString(last.trackUri))
+                seekOnceLoaded(last.trackUri, last.positionMs)
             }
         }
 
         MediaSession.MediaItemsWithStartPosition(
-            listOf(last.track.toMediaItem(last.contextId)), 0, last.positionMs
+            listOf(track.toMediaItem(playContextOf(last.context))), 0, last.positionMs
         )
     }
 
-    private class LastPlayed(val track: Track, val context: OutifyUri?, val positionMs: Long) {
-        val contextId: String get() = context?.toUriString() ?: NO_CONTEXT
+    /** Shown paused, nothing plays until the car asks for it. */
+    private suspend fun showPaused(last: LastPlayed, track: Track) {
+        playbackStateHolder.seekTo(last.positionMs.milliseconds)
+        playbackStateHolder.updatePosition(last.positionMs)
+        playbackStateHolder.setAudio(track.toPlayableAudio())
     }
 
-    private suspend fun lastPlayed(): LastPlayed? {
-        val trackUri = settings.lastTrackUri.first() ?: return null
-        val track = metadata.getTrackMetadata(listOf(trackUri)).firstOrNull() ?: return null
-        val context = settings.lastContextUri.first()?.let { OutifyUri.fromUriString(it) }
-        return LastPlayed(track, context, settings.lastPositionMs.first() ?: 0L)
+    /** Null when nothing was played yet or its metadata is gone. */
+    private suspend fun lastPlayed(): Pair<LastPlayed, Track>? {
+        val last = restoreLastPlayed(
+            settings.lastTrackUri.first(),
+            settings.lastContextUri.first(),
+            settings.lastPositionMs.first(),
+        ) ?: return null
+        val track = metadata.getTrackMetadata(listOf(last.trackUri)).firstOrNull() ?: return null
+        return last to track
     }
 
     /** A car connecting while the app is still starting asks before the session is up. */
@@ -146,9 +154,9 @@ class MediaLibrarySessionCallback @Inject constructor(
         withTimeoutOrNull(READY_TIMEOUT_MS) { spirc.isUsableFlow.first { it } }
     }
 
-    /** A load always starts a track from its beginning, so going back to where it was takes a seek. */
+    /** Goes back to where the track was, once the player has started it. */
     private suspend fun seekOnceLoaded(trackUri: String, positionMs: Long) {
-        if (positionMs < MIN_RESUME_POSITION_MS) return
+        if (!needsSeek(positionMs)) return
         withTimeoutOrNull(READY_TIMEOUT_MS) {
             playbackStateHolder.state.first { it.currentAudio?.uri == trackUri && it.isPlaying }
         } ?: return
@@ -240,7 +248,7 @@ class MediaLibrarySessionCallback @Inject constructor(
         params: MediaLibraryService.LibraryParams?
     ): ListenableFuture<LibraryResult<Void>> {
         browseScope.launch {
-            val results = runCatching { searchResults(query) }.getOrDefault(emptyList())
+            val results = attempt { searchResults(query) }.getOrDefault(emptyList())
             session.notifySearchResultChanged(browser, query, results.size, params)
         }
         return Futures.immediateFuture(LibraryResult.ofVoid())
@@ -277,13 +285,13 @@ class MediaLibrarySessionCallback @Inject constructor(
         startPositionMs: Long
     ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
         val requested = mediaItems.getOrNull(startIndex.coerceAtLeast(0)) ?: mediaItems.firstOrNull()
-        val (context, track) = requested?.let { parsePlayId(it.mediaId) } ?: (null to null)
+        val playId = requested?.let { parsePlayId(it.mediaId) }
         val spoken = requested?.requestMetadata?.searchQuery
 
         when {
-            track != null -> scope.launch(Dispatchers.IO) {
+            playId != null -> scope.launch(Dispatchers.IO) {
                 waitUntilReady()
-                playTrack(context, track)
+                playTrack(playId.context, playId.trackUri)
             }
 
             spoken != null -> scope.launch(Dispatchers.IO) { playFromSearch(spoken) }
@@ -309,17 +317,13 @@ class MediaLibrarySessionCallback @Inject constructor(
     private suspend fun playFromSearch(query: String) {
         waitUntilReady()
         if (query.isBlank()) {
-            val last = lastPlayed()
-            if (last != null) {
-                spirc.load(last.context, OutifyUri.fromUriString(last.track.uri))
-                seekOnceLoaded(last.track.uri, last.positionMs)
-            } else {
-                spirc.load(OutifyUri.Liked, null)
-            }
+            val target = resumeTarget(lastPlayed()?.first)
+            spirc.load(target.context, target.track)
+            target.track?.let { seekOnceLoaded(it.toUriString(), target.seekMs) }
             return
         }
 
-        val uri = runCatching { spClient.search(query, SEARCH_TYPES).firstOrNull() }.getOrNull()
+        val uri = attempt { spClient.search(query, SEARCH_TYPES).firstOrNull() }.getOrNull()
         if (uri == null) {
             Log.w(TAG, "Nothing found for \"$query\"")
             return
@@ -336,14 +340,12 @@ class MediaLibrarySessionCallback @Inject constructor(
         if (query.isBlank()) return emptyList()
         val uris = spClient.search(query, SEARCH_TYPES)?.toList().orEmpty()
 
-        val tracks = uris.filter { it.startsWith(TRACK_PREFIX) }.take(SEARCH_TRACKS)
-        val albums = uris.filter { it.startsWith("spotify:album:") }.take(SEARCH_FOLDERS)
-        val playlists = uris.filter { it.startsWith("spotify:playlist:") }.take(SEARCH_FOLDERS)
+        val picks = pickSearchResults(uris)
 
         return coroutineScope {
-            val albumItems = albums.map { async { albumFolder(it) } }
-            val playlistItems = playlists.map { async { playlistFolder(it) } }
-            tracksOf(tracks).map { it.toMediaItem(NO_CONTEXT) } +
+            val albumItems = picks.albums.map { async { albumFolder(it) } }
+            val playlistItems = picks.playlists.map { async { playlistFolder(it) } }
+            tracksOf(picks.tracks).map { it.toMediaItem(NO_CONTEXT) } +
                     albumItems.awaitAll().filterNotNull() +
                     playlistItems.awaitAll().filterNotNull()
         }
@@ -368,7 +370,7 @@ class MediaLibrarySessionCallback @Inject constructor(
         pageSize: Int,
         trackUris: suspend (contextUri: String) -> List<String>?,
     ): List<MediaItem> {
-        val contextUri = contextUriOf(parentId)
+        val contextUri = contextUriOf(parentId) ?: return emptyList()
         val uris = (trackUris(contextUri) ?: return emptyList())
             .filter { it.startsWith(TRACK_PREFIX) }
             .pageOf(page, pageSize)
@@ -395,8 +397,7 @@ class MediaLibrarySessionCallback @Inject constructor(
                 async {
                     val entity = stored[uri.removePrefix(PLAYLIST_PREFIX)]
                     if (entity != null) {
-                        playlistFolder(entity.id, entity.name, entity.pictureId.takeIf { it.isNotEmpty() }
-                            ?.let { ALBUM_COVER_URL + it })
+                        entity.toFolder()
                     } else {
                         limit.withPermit { playlistFolder(uri) }
                     }
@@ -405,10 +406,13 @@ class MediaLibrarySessionCallback @Inject constructor(
         }
     }
 
+    private fun PlaylistEntity.toFolder(): MediaItem = playlistFolder(
+        id, name, pictureId.takeIf { it.isNotEmpty() }?.let { ALBUM_COVER_URL + it },
+    )
+
     private suspend fun getAlbums(page: Int, pageSize: Int): List<MediaItem> {
-        val uris = runCatching {
-            spClient.getSavedItems(SpClient.ALBUMS).split(",")
-        }.getOrDefault(emptyList())
+        val uris = attempt { spClient.getSavedItems(SpClient.ALBUMS).split(",") }
+            .getOrDefault(emptyList())
             .filter { it.startsWith(ALBUM_PREFIX) }
             .ifEmpty { metadata.observeLikedAlbumUris().first() }
             .pageOf(page, pageSize)
@@ -421,12 +425,12 @@ class MediaLibrarySessionCallback @Inject constructor(
     }
 
     private suspend fun playlistFolder(uri: String): MediaItem? {
-        val playlist = runCatching { metadata.getPlaylistMetadata(uri, allowCached = true) }
+        val playlist = attempt { metadata.getPlaylistMetadata(uri, allowCached = true) }
             .getOrNull() ?: return null
         return playlistFolder(
             playlist.id,
             playlist.attributes.name,
-            runCatching { playlist.getCover(metadata, CoverSize.MEDIUM) }.getOrNull(),
+            attempt { playlist.getCover(metadata, CoverSize.MEDIUM) }.getOrNull(),
         )
     }
 
@@ -434,7 +438,7 @@ class MediaLibrarySessionCallback @Inject constructor(
         folder("${PlaybackService.PLAYLIST}:$id", name, artworkUrl = artworkUrl)
 
     private suspend fun albumFolder(uri: String): MediaItem? {
-        val album = runCatching { metadata.getAlbumMetadata(uri) }.getOrNull() ?: return null
+        val album = attempt { metadata.getAlbumMetadata(uri) }.getOrNull() ?: return null
         return folder(
             mediaId = "${PlaybackService.ALBUM}:${album.id}",
             title = album.name,
@@ -464,50 +468,20 @@ class MediaLibrarySessionCallback @Inject constructor(
 
     private companion object {
         const val TAG = "MediaLibrary"
-        const val TRACK_PREFIX = "spotify:track:"
-        const val PLAYLIST_PREFIX = "spotify:playlist:"
-        const val ALBUM_PREFIX = "spotify:album:"
-        const val PLAY_PREFIX = "play|"
-        const val NO_CONTEXT = "-"
         const val EXTRA_SEARCH_SUPPORTED = "android.media.browse.SEARCH_SUPPORTED"
         const val SEARCH_TYPES = "track,artist,album,playlist"
-        const val SEARCH_TRACKS = 20
-        const val SEARCH_FOLDERS = 5
         const val METADATA_FETCHES = 6
-        const val MIN_RESUME_POSITION_MS = 5_000L
         const val READY_TIMEOUT_MS = 20_000L
-
-        /** Page `page` of `pageSize` items, the whole list for an unbounded size. */
-        fun <T> List<T>.pageOf(page: Int, pageSize: Int): List<T> {
-            val size = pageSize.coerceIn(1, MAX_PAGE_SIZE)
-            return drop(page * size).take(size)
-        }
-
-        const val MAX_PAGE_SIZE = 100
-
-        /** `playlist:<id>` or `album:<id>` as the Spotify URI of that context. */
-        fun contextUriOf(folderId: String): String {
-            val (kind, id) = folderId.split(":", limit = 2)
-            return "spotify:$kind:$id"
-        }
-
-        /** The context and the track out of an id made by [toMediaItem], context null for liked songs. */
-        fun parsePlayId(mediaId: String): Pair<OutifyUri?, String?> {
-            if (!mediaId.startsWith(PLAY_PREFIX)) return null to null
-            val (context, track) = mediaId.removePrefix(PLAY_PREFIX).split("|", limit = 2)
-            val contextUri = when (context) {
-                NO_CONTEXT -> null
-                PlaybackService.LIKED -> OutifyUri.Liked
-                else -> OutifyUri.fromUriString(context)
-            }
-            return contextUri to track
-        }
     }
 }
 
-private fun Track.toMediaItem(context: String, isPlayable: Boolean = true, isBrowsable: Boolean = false) =
+/** Like runCatching, but a cancelled coroutine stays cancelled. */
+private inline fun <T> attempt(block: () -> T): Result<T> =
+    runCatching(block).onFailure { if (it is CancellationException) throw it }
+
+private fun Track.toMediaItem(context: String) =
     MediaItem.Builder()
-        .setMediaId("play|$context|$uri")
+        .setMediaId(playIdOf(context, uri))
         .setUri(uri)
         .setMediaMetadata(
             MediaMetadata.Builder()
@@ -517,8 +491,8 @@ private fun Track.toMediaItem(context: String, isPlayable: Boolean = true, isBro
                 .setAlbumTitle(album?.name)
                 .setArtworkUri(album?.getCover(CoverSize.LARGE)?.let { ALBUM_COVER_URL + it.uri }
                     ?.toUri())
-                .setIsPlayable(isPlayable)
-                .setIsBrowsable(isBrowsable)
+                .setIsPlayable(true)
+                .setIsBrowsable(false)
                 .setMediaType(MEDIA_TYPE_MUSIC)
                 .build()
         )

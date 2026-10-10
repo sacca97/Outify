@@ -49,6 +49,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -63,6 +65,9 @@ class PlaybackService : MediaLibraryService(),
     androidx.media3.common.Player.Listener,
     AudioManager.OnAudioFocusChangeListener {
     companion object {
+        /** How often the position of a playing track is stored. */
+        private const val POSITION_SAVE_INTERVAL_MS = 10_000L
+
         const val ROOT = "root"
         const val TRACK = "track"
         const val ARTIST = "artist"
@@ -213,11 +218,12 @@ class PlaybackService : MediaLibraryService(),
             playbackStateHolder.state
                 .map { it.currentAudio?.uri to it.isPlaying }
                 .distinctUntilChanged()
-                .collect { (uri, playing) ->
-                    if (uri == null) return@collect
-                    val position = if (playing) 0L
-                    else playbackStateHolder.estimatePosition().inWholeMilliseconds
-                    settings.saveLastTrack(uri, position)
+                .collectLatest { (uri, playing) ->
+                    if (uri == null) return@collectLatest
+                    do {
+                        settings.saveLastTrack(uri, playbackStateHolder.estimatePosition().inWholeMilliseconds)
+                        if (playing) delay(POSITION_SAVE_INTERVAL_MS)
+                    } while (playing)
                 }
         }
 
@@ -398,6 +404,7 @@ class PlaybackService : MediaLibraryService(),
         }
         scope.cancel()
         offloadScope.cancel()
+        mediaLibrarySessionCallback.release()
         unregisterReceiver(becomingNoisyListener)
         abandonAudioFocus()
 

@@ -50,20 +50,25 @@ pub(super) fn hold_player(was_playing: bool) {
     let Some(player) = live_player().take() else {
         return;
     };
-    if !was_playing {
-        return;
-    }
     let Some(rt) = crate::TOKIO_RUNTIME.get() else {
         return;
     };
+    if !was_playing {
+        // Dropping the last handle waits for the player thread, not on an async worker.
+        rt.spawn_blocking(move || drop(player));
+        return;
+    }
 
     let mut events = player.get_player_event_channel();
-    *offline_player() = Some(OfflinePlayer {
+    let previous = offline_player().replace(OfflinePlayer {
         player,
         resume_playing: true,
         finished: false,
         shutdown_pause_until: Instant::now() + SHUTDOWN_PAUSE_WINDOW,
     });
+    if let Some(previous) = previous {
+        rt.spawn_blocking(move || drop(previous.player));
+    }
     info!("keeping the player alive without a Connect session");
 
     rt.spawn(async move {

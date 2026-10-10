@@ -2,9 +2,9 @@ package cc.tomko.outify.ui.viewmodel.player
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cc.tomko.outify.core.model.OutifyUri
 import cc.tomko.outify.core.model.PlayableAudio
 import cc.tomko.outify.core.model.toPlayableAudio
-import cc.tomko.outify.core.model.OutifyUri
 import cc.tomko.outify.core.spirc.QueueTrackDto
 import cc.tomko.outify.core.spirc.SpircWrapper
 import cc.tomko.outify.data.dao.LikedDao
@@ -37,6 +37,13 @@ import kotlin.math.min
  * @param isQueue whether this entry was inserted by user manually (true) or if it's from context (false)
  */
 data class QueueEntry(val id: Long, val audio: PlayableAudio, val isQueue: Boolean)
+
+/**
+ * The part of [allNext] that is still not loaded when the loaded part of the whole queue
+ * ends at [loadedEnd] (exclusive) and [previousCount] entries come before the current one.
+ */
+internal fun <T> nextTailAfter(allNext: List<T>, previousCount: Int, loadedEnd: Int): List<T> =
+    allNext.drop(max(0, loadedEnd - previousCount - 1))
 
 @HiltViewModel
 class QueueViewModel @Inject constructor(
@@ -236,7 +243,7 @@ class QueueViewModel @Inject constructor(
 
                 val newEntries = loadAudioInRange(currentRange.last, newEndIndex, currentAudio)
 
-                unloadedNextTail = allNextUris.drop(max(0, newEndIndex - allPreviousUris.size - 1))
+                unloadedNextTail = nextTailAfter(allNextUris, allPreviousUris.size, newEndIndex)
 
                 _queueState.update { current ->
                     current.copy(

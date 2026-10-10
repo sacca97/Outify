@@ -414,7 +414,6 @@ private fun AccountLoginContent(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-
         }
 
         Spacer(Modifier.height(40.dp))
