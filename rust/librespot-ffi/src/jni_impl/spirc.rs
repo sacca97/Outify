@@ -705,18 +705,25 @@ pub extern "system" fn Java_cc_tomko_outify_core_spirc_Spirc_previousTracks(
         }
     };
 
-    let tracks_raw =
-        match with_spirc(|runtime| rt.block_on(async move { runtime.prev_tracks().await })) {
-            Ok(Ok(tracks)) => tracks, // success: outer Ok, inner Ok
-            Ok(Err(e)) => {
-                error!("with_spirc prev_tracks failed: {e}");
-                return std::ptr::null_mut();
-            }
-            Err(e) => {
-                error!("with_spirc session error for prev_tracks: {e:?}");
-                return std::ptr::null_mut();
-            }
-        };
+    // Hold the runtime lock only long enough to clone the handle: waiting on a
+    // stuck Connect task under it would block the restart that replaces it.
+    let handle = match with_spirc(|runtime| runtime.handle()) {
+        Ok(h) => h,
+        Err(e) => {
+            error!("with_spirc session error for prev_tracks: {e:?}");
+            return std::ptr::null_mut();
+        }
+    };
+
+    let tracks_raw = match rt.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(3), handle.prev_tracks()).await
+    }) {
+        Ok(Some(tracks)) => tracks,
+        Ok(None) | Err(_) => {
+            error!("prev_tracks got no answer from the Connect task");
+            return std::ptr::null_mut();
+        }
+    };
 
     let tracks: Vec<TrackDto> = tracks_raw
         .into_iter()
@@ -756,18 +763,25 @@ pub extern "system" fn Java_cc_tomko_outify_core_spirc_Spirc_nextTracks(
         }
     };
 
-    let tracks_raw =
-        match with_spirc(|runtime| rt.block_on(async move { runtime.next_tracks().await })) {
-            Ok(Ok(tracks)) => tracks,
-            Ok(Err(e)) => {
-                error!("with_spirc next_tracks failed: {e}");
-                return std::ptr::null_mut();
-            }
-            Err(e) => {
-                error!("with_spirc session error for next_tracks: {e:?}");
-                return std::ptr::null_mut();
-            }
-        };
+    // Hold the runtime lock only long enough to clone the handle: waiting on a
+    // stuck Connect task under it would block the restart that replaces it.
+    let handle = match with_spirc(|runtime| runtime.handle()) {
+        Ok(h) => h,
+        Err(e) => {
+            error!("with_spirc session error for next_tracks: {e:?}");
+            return std::ptr::null_mut();
+        }
+    };
+
+    let tracks_raw = match rt.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(3), handle.next_tracks()).await
+    }) {
+        Ok(Some(tracks)) => tracks,
+        Ok(None) | Err(_) => {
+            error!("next_tracks got no answer from the Connect task");
+            return std::ptr::null_mut();
+        }
+    };
 
     let tracks: Vec<TrackDto> = tracks_raw
         .into_iter()

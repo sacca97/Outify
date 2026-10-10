@@ -90,6 +90,10 @@ static REPEAT_MODE: AtomicU8 = AtomicU8::new(RepeatMode::Off as u8);
 static LAST_POSITION: AtomicU32 = AtomicU32::new(0);
 static IS_DEVICE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
+/// Whether the Connect task of the current runtime considers this device the
+/// active one. Commands are silently dropped while it is not.
+static CONNECT_ACTIVE: AtomicBool = AtomicBool::new(false);
+
 static STATE: AtomicU8 = AtomicU8::new(STOPPED);
 
 static RESTART_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -261,6 +265,11 @@ impl SpircRuntime {
         tokio::spawn(async move {
             let mut rx = event_rx;
             while let Some(ev) = rx.recv().await {
+                // A superseded runtime can still flush events while it shuts
+                // down; they must not overwrite the state of the new one.
+                if generation != RUNTIME_GENERATION.load(Ordering::Relaxed) {
+                    continue;
+                }
                 handle_event(ev);
             }
             info!("spirc runtime event receiver closed");
@@ -285,6 +294,12 @@ impl SpircRuntime {
         );
 
         Ok(Self { spirc, generation })
+    }
+
+    /// A handle that outlives the runtime lock, for calls that wait on the
+    /// Connect task.
+    pub fn handle(&self) -> Arc<Spirc> {
+        Arc::clone(&self.spirc)
     }
 
     pub fn play(&self) -> Result<(), librespot_core::Error> {
@@ -312,9 +327,26 @@ impl SpircRuntime {
     }
 
     pub fn prev(&self) -> Result<(), librespot_core::Error> {
+        // Going back from the first track makes librespot stop the player, and a
+        // stopped player ignores play and next. Restart the track instead.
+        if self.is_first_track() {
+            return self.seek_to(0);
+        }
         self.spirc.prev()?;
         self.arm("prev");
         Ok(())
+    }
+
+    /// Whether nothing precedes the current track. Answers `false` when the
+    /// Connect task cannot be asked, so a normal `prev` is attempted.
+    fn is_first_track(&self) -> bool {
+        let Some(rt) = crate::TOKIO_RUNTIME.get() else {
+            return false;
+        };
+        let asked = rt.block_on(async {
+            tokio::time::timeout(Duration::from_secs(1), self.spirc.prev_tracks()).await
+        });
+        matches!(asked, Ok(Some(tracks)) if tracks.is_empty())
     }
 
     pub fn load(
@@ -515,6 +547,18 @@ fn spawn_watchdog(spirc: Arc<Spirc>, spirc_task: JoinHandle<()>, generation: u64
             };
             let Some(reason) = reason else { continue };
 
+            // A command can legitimately produce no player event, for example
+            // when the player is paused. Only restart if the Connect task
+            // itself no longer answers.
+            if !finished && connect_task_responds(&spirc).await {
+                info!(
+                    "spirc watchdog: {} got no player event but the task responds, keeping it",
+                    stalled.unwrap_or("command")
+                );
+                clear_command_ack();
+                continue;
+            }
+
             if !is_current_runtime(&spirc, generation) {
                 debug!("spirc watchdog: {reason}, but runtime is no longer current");
                 return;
@@ -529,6 +573,20 @@ fn spawn_watchdog(spirc: Arc<Spirc>, spirc_task: JoinHandle<()>, generation: u64
     });
 }
 
+/// How long the Connect task gets to answer a probe before it counts as stuck.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Asks the Connect task for its queue and reports whether it answered in time.
+///
+/// An inactive task answers by dropping the request, which still proves its
+/// loop is running; only a missing reply counts as stuck. A finished task is
+/// handled separately by the caller.
+async fn connect_task_responds(spirc: &Spirc) -> bool {
+    tokio::time::timeout(PROBE_TIMEOUT, spirc.next_tracks())
+        .await
+        .is_ok()
+}
+
 /// Whether `expected` and its generation identify the runtime currently
 /// published in the container.
 fn is_current_runtime(expected: &Arc<Spirc>, generation: u64) -> bool {
@@ -538,6 +596,7 @@ fn is_current_runtime(expected: &Arc<Spirc>, generation: u64) -> bool {
 
 /// Records that a playback command was handed to the Connect task.
 fn arm_command_ack(generation: u64, label: &'static str) {
+    debug!("waiting for a player event after {label}");
     let now = Instant::now();
     if let Some(mutex) = PENDING_COMMAND.get() {
         if let Ok(mut guard) = mutex.lock() {
@@ -555,7 +614,9 @@ fn arm_command_ack(generation: u64, label: &'static str) {
 fn clear_command_ack() {
     if let Some(mutex) = PENDING_COMMAND.get() {
         if let Ok(mut guard) = mutex.lock() {
-            *guard = None;
+            if let Some(p) = guard.take() {
+                debug!("{} acknowledged after {}ms", p.label, p.armed_at.elapsed().as_millis());
+            }
         }
     }
 }
@@ -684,12 +745,14 @@ fn handle_event(event: PlayerEvent) {
             connection_id: _,
             user_name: _,
         } => {
+            CONNECT_ACTIVE.store(true, Ordering::Release);
             notify_device_state(true);
         }
         PlayerEvent::SessionDisconnected {
             connection_id: _,
             user_name: _,
         } => {
+            CONNECT_ACTIVE.store(false, Ordering::Release);
             notify_device_state(false);
         }
         PlayerEvent::VolumeChanged { volume } => {
@@ -765,16 +828,19 @@ pub fn store_settings(
 pub async fn start_runtime() -> Result<(), SpircError> {
     let settings = current_settings();
 
-    // A new build gets a fresh generation so a watchdog or pending command of
-    // a superseded runtime can never be mistaken for this one.
-    let generation = RUNTIME_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
-
     let lock = SPIRC_RUNTIME.get_or_init(|| RwLock::new(None));
     if lock.read().map(|g| g.is_some()).unwrap_or(true) {
         return Err(SpircError::Other(
             "spirc runtime slot is occupied".to_string(),
         ));
     }
+
+    // A new build gets a fresh generation so a watchdog or pending command of
+    // a superseded runtime can never be mistaken for this one. Only bumped once
+    // the slot is known to be free, or a rejected call would silence the live
+    // runtime's events.
+    let generation = RUNTIME_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+    CONNECT_ACTIVE.store(false, Ordering::Release);
 
     let session = with_session(|s| s.clone()).map_err(|e| {
         error!("failed to clone session for spirc init: {e}");
@@ -953,39 +1019,51 @@ fn command_ack_diagnostics() -> String {
     }
 }
 
+/// How long to wait for the Connect task to report that it became active.
+const ACTIVATION_SETTLE: Duration = Duration::from_millis(1500);
+
 /// Re-establishes the Connect session and playback after a (re)build.
-pub fn reestablish_after_restart() {
-    let transferred = with_spirc(|spirc| {
-        let _ = spirc.activate();
-
-        if AUTO_TRANSFER.load(Ordering::Relaxed) {
-            match spirc.transfer() {
-                Ok(()) => {
-                    info!("transferred session after restart");
-                    true
-                }
-                Err(e) => {
-                    warn!("transfer after restart failed: {e}");
-                    false
-                }
+///
+/// Activating locally can be undone right away by a stale cluster update that
+/// was already on its way, leaving the device inactive and every command
+/// dropped. So the result is checked, and activation is retried once the update
+/// has gone by.
+pub async fn reestablish_after_restart() {
+    for attempt in 1..=3 {
+        // After two failed local activations ask the server to hand the
+        // session over instead.
+        let transfer = attempt == 3 && AUTO_TRANSFER.load(Ordering::Relaxed);
+        let sent = with_spirc(|spirc| {
+            if transfer {
+                spirc.transfer()
+            } else {
+                spirc.activate()
             }
-        } else {
-            info!("skipping transfer after restart, auto transfer disabled");
-            false
+        });
+        match sent {
+            Ok(Err(e)) => warn!("activation attempt {attempt} failed: {e}"),
+            Err(e) => {
+                warn!("cannot inspect spirc runtime after restart: {e}");
+                return;
+            }
+            Ok(Ok(())) => {}
         }
-    });
 
-    match transferred {
-        Ok(true) => {
-            let _ = with_spirc(|spirc| spirc.resume_playback());
+        tokio::time::sleep(ACTIVATION_SETTLE).await;
+        if CONNECT_ACTIVE.load(Ordering::Acquire) {
+            info!("device active after restart (attempt {attempt})");
+            if AUTO_TRANSFER.load(Ordering::Relaxed) {
+                let _ = with_spirc(|spirc| spirc.resume_playback());
+            } else {
+                // Another device stayed active, so the server drives our state and
+                // reloading the queue here would fight it.
+                debug!("not restoring playback, auto transfer disabled");
+            }
+            return;
         }
-        Ok(false) => {
-            // Another device stayed active, so the server drives our state and
-            // reloading the queue here would fight it.
-            debug!("not restoring playback, session stayed with another device");
-        }
-        Err(e) => warn!("cannot inspect spirc runtime after restart: {e}"),
     }
+
+    warn!("device still inactive after restart, commands will be dropped");
 }
 
 // Notifies UI of buffer state with given method
