@@ -75,7 +75,7 @@ class OutifyApplication : Application() {
 
         appScope.launch {
             val spotifyId = settingsRepository.clientId.firstOrNull() ?: BuildConfig.SPOTIFY_CLIENT_ID
-            val spotifySecret = settingsRepository.clientSecret.firstOrNull() ?: BuildConfig.SPOTIFY_CLIENT_ID
+            val spotifySecret = settingsRepository.clientSecret.firstOrNull() ?: BuildConfig.SPOTIFY_CLIENT_SECRET
 
             if (spotifySecret.isEmpty() || spotifyId.isEmpty()) {
                 Toast.makeText(
