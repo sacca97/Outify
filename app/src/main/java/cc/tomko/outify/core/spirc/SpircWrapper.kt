@@ -2,10 +2,15 @@ package cc.tomko.outify.core.spirc
 
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
+import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.media3.common.util.UnstableApi
+import cc.tomko.outify.R
 import cc.tomko.outify.core.RadioResult
 import cc.tomko.outify.core.SpClient
 import cc.tomko.outify.core.model.DevicesResponse
@@ -18,9 +23,13 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -33,6 +42,9 @@ import kotlin.time.DurationUnit
 import kotlin.time.toDuration
 
 private const val TAG = "SpircWrapper"
+
+/** Minimum time between two "not ready" messages shown to the user. */
+private const val NOT_READY_MESSAGE_INTERVAL_MS = 3_000L
 
 @Serializable
 data class QueueTrackDto(
@@ -63,8 +75,26 @@ class SpircWrapper @Inject constructor(
 
     val isUsableFlow: StateFlow<Boolean> = _isUsable.asStateFlow()
 
+    @Volatile
+    private var state = SpircState.Stopped
+
+    @Volatile
+    private var stateSince = SystemClock.elapsedRealtime()
+
+    private var lastNotReadyMessage = 0L
+
+    private val _droppedCommands = MutableSharedFlow<String>(
+        extraBufferCapacity = 8,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /** Emits the name of every command that was dropped because the runtime was not ready. */
+    val droppedCommands: SharedFlow<String> = _droppedCommands.asSharedFlow()
+
     /** Reflects a lifecycle state published by [SpircController]. */
     fun onStateChanged(state: SpircState) {
+        this.state = state
+        stateSince = SystemClock.elapsedRealtime()
         _isUsable.value = state.isUsable
     }
 
@@ -111,7 +141,16 @@ class SpircWrapper @Inject constructor(
     private fun requireReady(command: String): Boolean {
         if (isUsable) return true
 
-        Log.d(TAG, "dropping $command, spirc is not ready")
+        val now = SystemClock.elapsedRealtime()
+        Log.w(TAG, "dropping $command, spirc is $state (for ${now - stateSince} ms)")
+        _droppedCommands.tryEmit(command)
+
+        if (now - lastNotReadyMessage > NOT_READY_MESSAGE_INTERVAL_MS) {
+            lastNotReadyMessage = now
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(context, R.string.spirc_not_ready, Toast.LENGTH_SHORT).show()
+            }
+        }
         return false
     }
 

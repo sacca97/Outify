@@ -1,11 +1,14 @@
 package cc.tomko.outify.core.spirc
 
+import android.os.SystemClock
 import android.util.Log
 import cc.tomko.outify.core.Session
 import cc.tomko.outify.core.SessionCallback
 import cc.tomko.outify.data.repository.SettingsRepository
 import cc.tomko.outify.playback.PlaybackStateHolder
 import cc.tomko.outify.playback.model.getSpeed
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,6 +23,16 @@ private const val TAG = "SpircController"
 
 /** Upper bound for [SpircController.restartAndAwaitReady]. */
 private const val RESTART_TIMEOUT_MS = 30_000L
+
+/** Automatic retries after a failure back off from the first delay up to the maximum. */
+private const val INITIAL_RETRY_DELAY_MS = 2_000L
+private const val MAX_RETRY_DELAY_MS = 30_000L
+
+/** Automatic retries before giving up until the user tries to play something. */
+private const val MAX_AUTO_RETRIES = 5
+
+/** Minimum time between two retries triggered by dropped commands. */
+private const val MIN_COMMAND_RETRY_GAP_MS = 2_000L
 
 /**
  * Owns the spirc lifecycle.
@@ -43,7 +56,15 @@ class SpircController @Inject constructor(
 
     private var bufferCallbacksRegistered = false
 
+    private var dropCollectorStarted = false
+    private var retryJob: Job? = null
+    private var retryDelayMs = INITIAL_RETRY_DELAY_MS
+    private var autoRetries = 0
+    private var lastCommandRetryAt = 0L
+
     fun start() {
+        collectDroppedCommands()
+
         session.initializeSession(object : SessionCallback {
             override fun onInitialized() {
                 spirc.scope.launch {
@@ -71,6 +92,50 @@ class SpircController @Inject constructor(
                 updateState(SpircState.Failed)
             }
         })
+    }
+
+    /**
+     * The user is waiting for a command that was dropped: if the runtime has
+     * failed, try to bring it back right away instead of waiting for the backoff.
+     */
+    private fun collectDroppedCommands() {
+        if (dropCollectorStarted) return
+        dropCollectorStarted = true
+
+        spirc.scope.launch {
+            spirc.droppedCommands.collect { command ->
+                if (_state.value != SpircState.Failed) return@collect
+
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastCommandRetryAt < MIN_COMMAND_RETRY_GAP_MS) return@collect
+                lastCommandRetryAt = now
+
+                Log.w(TAG, "retrying spirc, '$command' was dropped while failed")
+                retryJob?.cancel()
+                autoRetries = 0
+                restart("command while failed")
+            }
+        }
+    }
+
+    /** Retries after a failure, with an increasing delay and a bounded number of attempts. */
+    private fun scheduleRetry() {
+        retryJob?.cancel()
+
+        if (autoRetries >= MAX_AUTO_RETRIES) {
+            Log.w(TAG, "spirc still failing after $autoRetries retries, waiting for a playback command")
+            return
+        }
+
+        val delayMs = retryDelayMs
+        retryDelayMs = (delayMs * 2).coerceAtMost(MAX_RETRY_DELAY_MS)
+        autoRetries++
+
+        Log.w(TAG, "spirc failed (${_lastError.value ?: "unknown reason"}), retry $autoRetries/$MAX_AUTO_RETRIES in $delayMs ms")
+        retryJob = spirc.scope.launch {
+            delay(delayMs)
+            restart("auto retry $autoRetries")
+        }
     }
 
     /**
@@ -214,6 +279,17 @@ class SpircController @Inject constructor(
         Log.i(TAG, "state ${_state.value} -> $state")
         _state.value = state
         spirc.onStateChanged(state)
+
+        when (state) {
+            SpircState.Ready -> {
+                retryJob?.cancel()
+                retryDelayMs = INITIAL_RETRY_DELAY_MS
+                autoRetries = 0
+            }
+
+            SpircState.Failed -> scheduleRetry()
+            else -> Unit
+        }
     }
 }
 
