@@ -1,6 +1,7 @@
 package cc.tomko.outify.ui.viewmodel
 
 import android.app.Application
+import android.util.Log
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Queue
 import androidx.compose.material.icons.filled.Radio
@@ -33,6 +34,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -50,6 +52,16 @@ class MainViewModel @Inject constructor(
     private val likedRepository: LikedRepository,
     private val json: Json,
 ) : AndroidViewModel(application) {
+    init {
+        // Swipes and the heart decide between like and unlike from the local list,
+        // so it must not wait for the Liked screen to be opened to catch up.
+        viewModelScope.launch {
+            spirc.isUsableFlow.first { it }
+            runCatching { likedRepository.syncLikedUris() }
+                .onFailure { Log.w("MainViewModel", "Failed to refresh the liked list", it) }
+        }
+    }
+
     val swipeSettings: Flow<List<GestureSetting>> =
         settingsRepository.interfaceSettings.map { it.gestureSettings }
 

@@ -14,6 +14,7 @@ import cc.tomko.outify.playback.PlaybackStateHolder
 import cc.tomko.outify.services.SyncNotificationManager
 import coil3.ImageLoader
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -150,6 +151,12 @@ class LikedViewModel @Inject constructor(
 
                     isRefreshing.value = false
                 }.onFailure {
+                    // Leaving the screen cancels the sync, which is not a failure.
+                    if (it is CancellationException) {
+                        syncNotificationManager.cancel()
+                        isRefreshing.value = false
+                        throw it
+                    }
                     syncNotificationManager.showError(it.message ?: "Sync failed")
 
                     isRefreshing.value = false
