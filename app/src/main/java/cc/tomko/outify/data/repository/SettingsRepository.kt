@@ -35,6 +35,7 @@ class SettingsRepository @Inject constructor(
 ) {
     object Keys {
         val SHUFFLE = booleanPreferencesKey("shuffle")
+        val BATTERY_PROMPT_SHOWN = booleanPreferencesKey("battery_prompt_shown")
         val REPEAT = booleanPreferencesKey("repeat")
         val REPEAT_TRACK = booleanPreferencesKey("repeat_track")
         val GAPLESS = booleanPreferencesKey("gapless")
@@ -547,6 +548,12 @@ class SettingsRepository @Inject constructor(
 
     suspend fun saveCachedTops(json: String) {
         dataStore.edit { it[Keys.Cached.CACHED_TOPS] = json }
+    }
+
+    val batteryPromptShown: Flow<Boolean> = dataStore.data.map { it[Keys.BATTERY_PROMPT_SHOWN] ?: false }
+
+    suspend fun setBatteryPromptShown() {
+        dataStore.edit { it[Keys.BATTERY_PROMPT_SHOWN] = true }
     }
 
     val clientId: Flow<String?> = dataStore.data.map { it[Keys.CLIENT_ID] }

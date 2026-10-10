@@ -112,9 +112,12 @@ import cc.tomko.outify.ui.viewmodel.player.MiniPlayerViewModel
 import cc.tomko.outify.ui.viewmodel.player.MultiQueueViewModel
 import cc.tomko.outify.ui.viewmodel.player.PlayerViewModel
 import cc.tomko.outify.ui.viewmodel.player.QueueViewModel
+import androidx.lifecycle.lifecycleScope
+import cc.tomko.outify.data.repository.SettingsRepository
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -127,6 +130,9 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var volumeController: VolumeController
+
+    @Inject
+    lateinit var settingsRepository: SettingsRepository
 
     private val deepLinkFlow = MutableSharedFlow<Uri>(extraBufferCapacity = 1)
 
@@ -162,7 +168,13 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
             !getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
         ) {
-            GlobalPopupController.show(PopupSpec.BatteryOptimization)
+            // Ask once; the setting can still be changed from the system settings.
+            lifecycleScope.launch {
+                if (!settingsRepository.batteryPromptShown.first()) {
+                    settingsRepository.setBatteryPromptShown()
+                    GlobalPopupController.show(PopupSpec.BatteryOptimization)
+                }
+            }
         }
 
         volumeController.start()
