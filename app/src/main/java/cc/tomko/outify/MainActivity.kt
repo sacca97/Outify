@@ -136,6 +136,9 @@ class MainActivity : ComponentActivity() {
 
     private val deepLinkFlow = MutableSharedFlow<Uri>(extraBufferCapacity = 1)
 
+    // The launch link arrives before the UI collects deepLinkFlow, which does not replay.
+    private var initialDeepLink: Uri? = null
+
     @Volatile
     private var assistContentRoute: Route? = null
 
@@ -181,8 +184,9 @@ class MainActivity : ComponentActivity() {
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
-        intent?.data?.let {
-            deepLinkFlow.tryEmit(it)
+        // Not on recreation (e.g. rotation), or the link would open again.
+        if (savedInstanceState == null) {
+            initialDeepLink = intent?.data
         }
 
         setContent {
@@ -212,7 +216,7 @@ class MainActivity : ComponentActivity() {
         val backStack = rememberNavBackStack(startRoute)
 
         LaunchedEffect(Unit) {
-            deepLinkFlow.collect { uri ->
+            fun open(uri: Uri) {
                 val path = uri.lastPathSegment?.lowercase() ?: ""
                 if (path.endsWith(".outify")) {
                     PendingBackupImport.offer(uri)
@@ -223,6 +227,12 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+
+            initialDeepLink?.let {
+                initialDeepLink = null
+                open(it)
+            }
+            deepLinkFlow.collect { open(it) }
         }
 
         val routes = listOf(
@@ -699,6 +709,7 @@ class MainActivity : ComponentActivity() {
                     "artist" -> Route.ArtistScreen(uri.toString())
                     "track" -> Route.TrackScreen(uri.toString())
                     "playlist" -> Route.PlaylistScreen(uri.toString())
+                    "show" -> Route.ShowScreen(uri.toString())
                     "user" -> Route.ProfileScreen(uri.toString())
                     else -> null
                 }
@@ -714,6 +725,7 @@ class MainActivity : ComponentActivity() {
                 "artist" -> Route.ArtistScreen(internalUri)
                 "track" -> Route.TrackScreen(internalUri)
                 "playlist" -> Route.PlaylistScreen(internalUri)
+                "show" -> Route.ShowScreen(internalUri)
                 "user" -> Route.ProfileScreen(internalUri)
                 else -> null
             }
@@ -721,7 +733,8 @@ class MainActivity : ComponentActivity() {
 
         // https://open.spotify.com/x/y
         if (uri.scheme == "https" && uri.host == "open.spotify.com") {
-            val segments = uri.pathSegments
+            // Shared links can carry a locale prefix: open.spotify.com/intl-fr/track/ID
+            val segments = uri.pathSegments.let { if (it.firstOrNull()?.startsWith("intl-") == true) it.drop(1) else it }
             if (segments.size >= 2) {
                 val type = segments[0]
                 val id = segments[1]
@@ -732,6 +745,7 @@ class MainActivity : ComponentActivity() {
                     "artist" -> Route.ArtistScreen(internalUri)
                     "track" -> Route.TrackScreen(internalUri)
                     "playlist" -> Route.PlaylistScreen(internalUri)
+                    "show" -> Route.ShowScreen(internalUri)
                     "user" -> Route.ProfileScreen(internalUri)
                     else -> null
                 }

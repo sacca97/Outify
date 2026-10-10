@@ -88,25 +88,38 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Playback and account OAuth callbacks -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
 
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
 
-                <!-- Playback OAuth callback -->
                 <data android:scheme="outify" />
                 <data android:host="auth_complete" />
                 <data android:host="auth_failed" />
-
-                <!-- Account OAuth callback -->
                 <data android:host="account_auth_complete" />
                 <data android:host="account_auth_failed" />
+            </intent-filter>
 
-                <!-- Opening spotify URLs -->
+            <!-- Opening spotify: URIs. Kept apart from the filter above, because hosts
+                 listed there would stop host-less URIs like spotify:album:ID from matching. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
                 <data android:scheme="spotify" />
+            </intent-filter>
 
-                <!-- Opening spotify URLs -->
+            <!-- Opening open.spotify.com links -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
                 <data
                     android:host="open.spotify.com"
                     android:scheme="https" />
