@@ -698,6 +698,15 @@ pub extern "system" fn Java_cc_tomko_outify_core_spirc_Spirc_playerPrevious(
     }
 }
 
+/// The Kotlin side expects a JSON string, never null, so an unavailable queue
+/// is reported as an empty one.
+fn empty_track_list(env: &JNIEnv) -> jstring {
+    match env.new_string("[]") {
+        Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 #[derive(Serialize)]
 struct TrackDto {
     uri: String,
@@ -723,7 +732,7 @@ pub extern "system" fn Java_cc_tomko_outify_core_spirc_Spirc_previousTracks(
         Ok(h) => h,
         Err(e) => {
             error!("with_spirc session error for prev_tracks: {e:?}");
-            return std::ptr::null_mut();
+            return empty_track_list(&env);
         }
     };
 
@@ -733,7 +742,7 @@ pub extern "system" fn Java_cc_tomko_outify_core_spirc_Spirc_previousTracks(
         Ok(Some(tracks)) => tracks,
         Ok(None) | Err(_) => {
             error!("prev_tracks got no answer from the Connect task");
-            return std::ptr::null_mut();
+            return empty_track_list(&env);
         }
     };
 
@@ -781,7 +790,7 @@ pub extern "system" fn Java_cc_tomko_outify_core_spirc_Spirc_nextTracks(
         Ok(h) => h,
         Err(e) => {
             error!("with_spirc session error for next_tracks: {e:?}");
-            return std::ptr::null_mut();
+            return empty_track_list(&env);
         }
     };
 
@@ -791,7 +800,7 @@ pub extern "system" fn Java_cc_tomko_outify_core_spirc_Spirc_nextTracks(
         Ok(Some(tracks)) => tracks,
         Ok(None) | Err(_) => {
             error!("next_tracks got no answer from the Connect task");
-            return std::ptr::null_mut();
+            return empty_track_list(&env);
         }
     };
 

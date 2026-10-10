@@ -337,6 +337,15 @@ impl SpircRuntime {
         uri: String,
         options: LoadRequestOptions,
     ) -> Result<(), librespot_core::Error> {
+        // Another device connecting can leave this one inactive, and an inactive
+        // device drops the load. Loading is an explicit request to play here, so
+        // take the control back first; the Connect task handles the two commands
+        // in order.
+        if !CONNECT_ACTIVE.load(Ordering::Acquire) {
+            info!("device inactive, activating before load");
+            self.spirc.activate()?;
+        }
+
         let shuffle = IS_SHUFFLING.load(std::sync::atomic::Ordering::Relaxed);
         let repeat_mode =
             RepeatMode::from_u8(REPEAT_MODE.load(std::sync::atomic::Ordering::Relaxed));
