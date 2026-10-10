@@ -40,8 +40,16 @@ import kotlinx.serialization.json.Json
 import java.io.ByteArrayOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.abs
 import kotlin.time.DurationUnit
 import kotlin.time.toDuration
+
+/** Longest side of the artwork handed to the media session. */
+private const val ARTWORK_MAX_SIZE_PX = 512
+private const val ARTWORK_JPEG_QUALITY = 90
+
+/** Position drift above which a position update is pushed to the media session. */
+private const val POSITION_RESYNC_THRESHOLD_MS = 1000L
 
 @Singleton
 @UnstableApi
@@ -120,7 +128,7 @@ class Player @Inject constructor(
                                     val bmp = result.image?.toBitmap()
 
                                     val finalBmp = bmp?.let {
-                                        val max = 1024
+                                        val max = ARTWORK_MAX_SIZE_PX
                                         if (it.width > max || it.height > max) {
                                             val ratio = minOf(
                                                 max.toFloat() / it.width,
@@ -136,8 +144,8 @@ class Player @Inject constructor(
                                     val bytes = finalBmp?.let { fb ->
                                         ByteArrayOutputStream().use { stream ->
                                             fb.compress(
-                                                android.graphics.Bitmap.CompressFormat.PNG,
-                                                100,
+                                                android.graphics.Bitmap.CompressFormat.JPEG,
+                                                ARTWORK_JPEG_QUALITY,
                                                 stream
                                             )
                                             stream.toByteArray()
@@ -176,6 +184,8 @@ class Player @Inject constructor(
                     json_raw: String
                 ) {
                     scope.launch {
+                        val audioBefore = stateHolder.state.value.currentAudio?.id
+                        val positionBefore = contentPosition
                         stateHolder.seekTo(position_ms.toDuration(DurationUnit.MILLISECONDS))
 
                         val currentAudio = stateHolder.state.value.currentAudio
@@ -201,14 +211,20 @@ class Player @Inject constructor(
                             track?.let { stateHolder.setAudio(it.toPlayableAudio()) }
                         }
 
-                        invalidateState()
+                        // The player already extrapolates the position while playing, so a
+                        // small drift doesn't need to be pushed to the media session.
+                        val audioChanged = stateHolder.state.value.currentAudio?.id != audioBefore
+                        if (audioChanged || abs(positionBefore - position_ms) > POSITION_RESYNC_THRESHOLD_MS) {
+                            invalidateState()
+                        }
                     }
                 }
 
                 override fun onPlayingStatus(playing: Boolean) {
                     scope.launch {
+                        val changed = stateHolder.state.value.isPlaying != playing
                         stateHolder.setPlaying(playing)
-                        invalidateState()
+                        if (changed) invalidateState()
                     }
                 }
             }, stateHolder
