@@ -12,6 +12,7 @@ pub mod spclient;
 pub mod spotify;
 pub mod types;
 
+mod audio_cache;
 mod playback;
 mod profile;
 mod spirc;

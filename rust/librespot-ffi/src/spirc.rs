@@ -646,6 +646,7 @@ fn handle_event(event: PlayerEvent) {
 
         PlayerEvent::TrackChanged { audio_item } => {
             clear_command_ack();
+            crate::audio_cache::track_started(&audio_item);
             LAST_POSITION.store(0, std::sync::atomic::Ordering::Relaxed);
             crate::jni_utils::playback::on_player_track_update(audio_item.track_id.clone());
         }
