@@ -548,6 +548,8 @@ pub extern "system" fn Java_cc_tomko_outify_core_spirc_Spirc_seekTo(
             warn!("with_spirc seek_to failed: {e:?}");
             0
         }
+        // Without a Connect session only the offline player can be controlled.
+        Err(SpircError::NotCreated) if crate::spirc::offline_seek(jposition as u32) => 1,
         Err(e) => {
             warn!("with_spirc session error for seek_to: {e:?}");
             0
@@ -603,6 +605,8 @@ pub extern "system" fn Java_cc_tomko_outify_core_spirc_Spirc_playerPlay(
             warn!("with_spirc play failed: {e:?}");
             0
         }
+        // Without a Connect session only the offline player can be controlled.
+        Err(SpircError::NotCreated) if crate::spirc::offline_play() => 1,
         Err(e) => {
             warn!("with_spirc session error for play: {e:?}");
             0
@@ -622,6 +626,8 @@ pub extern "system" fn Java_cc_tomko_outify_core_spirc_Spirc_playerPause(
             warn!("with_spirc pause failed: {e:?}");
             0
         }
+        // Without a Connect session only the offline player can be controlled.
+        Err(SpircError::NotCreated) if crate::spirc::offline_pause() => 1,
         Err(e) => {
             warn!("with_spirc session error for pause: {e:?}");
             0
@@ -641,6 +647,8 @@ pub extern "system" fn Java_cc_tomko_outify_core_spirc_Spirc_playerPlayPause(
             warn!("with_spirc play_pause failed: {e:?}");
             0
         }
+        // Without a Connect session only the offline player can be controlled.
+        Err(SpircError::NotCreated) if crate::spirc::offline_play_pause() => 1,
         Err(e) => {
             warn!("with_spirc session error for play_pause: {e:?}");
             0

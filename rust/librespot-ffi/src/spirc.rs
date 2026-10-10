@@ -23,6 +23,30 @@ use tokio::task::JoinHandle;
 
 use crate::session::with_session;
 
+mod offline;
+pub use offline::{
+    pause as offline_pause, play as offline_play, play_pause as offline_play_pause,
+    seek as offline_seek,
+};
+
+/// Stores the position the player reported and when it did.
+fn record_position(position_ms: u32) {
+    LAST_POSITION.store(position_ms, Ordering::Relaxed);
+    let at = LAST_POSITION_AT.get_or_init(|| Mutex::new(Instant::now()));
+    *at.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Instant::now();
+}
+
+/// The last reported position, moved on by the time since the report.
+fn estimated_position() -> u32 {
+    let since_report = LAST_POSITION_AT
+        .get()
+        .map(|at| at.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).elapsed())
+        .unwrap_or_default();
+    LAST_POSITION
+        .load(Ordering::Relaxed)
+        .saturating_add(since_report.as_millis() as u32)
+}
+
 #[derive(Error, Debug)]
 pub enum SpircError {
     #[error("Spirc not initialized")]
@@ -88,6 +112,7 @@ static IS_PLAYING: AtomicBool = AtomicBool::new(false);
 static IS_SHUFFLING: AtomicBool = AtomicBool::new(false);
 static REPEAT_MODE: AtomicU8 = AtomicU8::new(RepeatMode::Off as u8);
 static LAST_POSITION: AtomicU32 = AtomicU32::new(0);
+static LAST_POSITION_AT: OnceCell<Mutex<Instant>> = OnceCell::new();
 static IS_DEVICE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// Whether the Connect task of the current runtime considers this device the
@@ -240,6 +265,7 @@ impl SpircRuntime {
             mixer_impl.get_soft_volume(),
             move || sink_builder(None, audio_format),
         );
+        offline::remember(&player);
 
         let connect_config = ConnectConfig {
             name: device_name,
@@ -636,7 +662,7 @@ fn handle_event(event: PlayerEvent) {
         } => {
             clear_command_ack();
             IS_PLAYING.store(true, std::sync::atomic::Ordering::Relaxed);
-            LAST_POSITION.store(position_ms, std::sync::atomic::Ordering::Relaxed);
+            record_position(position_ms);
 
             update_current_track(track_id.clone());
 
@@ -647,7 +673,7 @@ fn handle_event(event: PlayerEvent) {
         PlayerEvent::TrackChanged { audio_item } => {
             clear_command_ack();
             crate::audio_cache::track_started(&audio_item);
-            LAST_POSITION.store(0, std::sync::atomic::Ordering::Relaxed);
+            record_position(0);
             crate::jni_utils::playback::on_player_track_update(audio_item.track_id.clone());
         }
 
@@ -658,7 +684,7 @@ fn handle_event(event: PlayerEvent) {
         } => {
             clear_command_ack();
             IS_PLAYING.store(false, std::sync::atomic::Ordering::Relaxed);
-            LAST_POSITION.store(position_ms, std::sync::atomic::Ordering::Relaxed);
+            record_position(position_ms);
 
             update_current_track(track_id.clone());
 
@@ -672,7 +698,7 @@ fn handle_event(event: PlayerEvent) {
             position_ms,
         } => {
             clear_command_ack();
-            LAST_POSITION.store(position_ms, std::sync::atomic::Ordering::Relaxed);
+            record_position(position_ms);
 
             update_current_track(track_id.clone());
             crate::jni_utils::playback::on_player_position_update(position_ms, track_id.clone());
@@ -684,7 +710,7 @@ fn handle_event(event: PlayerEvent) {
             position_ms,
         } => {
             clear_command_ack();
-            LAST_POSITION.store(position_ms, std::sync::atomic::Ordering::Relaxed);
+            record_position(position_ms);
 
             update_current_track(track_id.clone());
             crate::jni_utils::playback::on_player_position_update(position_ms, track_id.clone());
@@ -891,7 +917,9 @@ pub fn teardown_runtime(reason: &str) {
     if let Some(runtime) = taken {
         info!("tearing down spirc runtime ({reason})");
         clear_command_ack();
+        let was_playing = IS_PLAYING.load(Ordering::Relaxed);
         runtime.shutdown();
+        offline::hold_player(was_playing);
     }
 }
 
@@ -1039,15 +1067,6 @@ pub fn has_context() -> bool {
         .unwrap_or(false)
 }
 
-/// Reports a stopped player to Kotlin, for when the runtime goes away without
-/// the player getting to emit a `Paused` event.
-///
-/// `IS_PLAYING` is left alone on purpose: `resume_playback` reads it to decide
-/// whether to start playing again.
-pub fn mark_stopped() {
-    crate::jni_utils::playback::on_player_status(false);
-}
-
 /// Re-establishes the Connect session and playback after a (re)build.
 ///
 /// Activating locally can be undone right away by a stale cluster update that
@@ -1082,6 +1101,7 @@ pub async fn reestablish_after_restart(resume: bool) {
         tokio::time::sleep(ACTIVATION_SETTLE).await;
         if CONNECT_ACTIVE.load(Ordering::Acquire) {
             info!("device active after restart (attempt {attempt})");
+            offline::take_over().await;
             if resume || AUTO_TRANSFER.load(Ordering::Relaxed) {
                 let _ = with_spirc(|spirc| spirc.resume_playback());
             } else {
@@ -1150,6 +1170,9 @@ pub fn current_track() -> Option<String> {
 
 pub fn shutdown() {
     teardown_runtime("shutdown");
+    if let Some(rt) = crate::TOKIO_RUNTIME.get() {
+        rt.block_on(offline::drop_player());
+    }
     info!("spirc runtime shut down");
 }
 

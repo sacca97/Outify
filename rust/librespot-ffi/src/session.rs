@@ -163,11 +163,10 @@ pub async fn rebuild_all(reason: &str) -> Result<(), String> {
     crate::spirc::set_state(crate::spirc::SpircState::Rebuilding);
     notify_callback("onRestarting");
 
-    // The old player dies with the session. Remember whether there is something
-    // to restore and stop the UI from claiming it is still playing.
+    // A player that is playing keeps going through the rebuild. Remember whether
+    // there is something to restore afterwards.
     let resume = crate::spirc::has_context();
     cleanup().await;
-    crate::spirc::mark_stopped();
 
     let mut delay = Duration::from_millis(500);
     let mut last_error = "rebuild never ran".to_string();

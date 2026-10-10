@@ -137,6 +137,16 @@ class SpircWrapper @Inject constructor(
         ContextCompat.startForegroundService(context, intent)
     }
 
+    /**
+     * Runs a play or pause command. While the runtime is unavailable the native
+     * side can still control a player that outlived its session, so the command
+     * is only rejected when it cannot do that either.
+     */
+    private fun playbackCommand(command: String, run: () -> Boolean): Boolean {
+        if (isUsable) return run()
+        return run() || requireReady(command)
+    }
+
     /** Logs and rejects a command that arrived while the runtime is unavailable. */
     private fun requireReady(command: String): Boolean {
         if (isUsable) return true
@@ -327,6 +337,14 @@ class SpircWrapper @Inject constructor(
             return false
         }
 
+        if (!isUsable) {
+            // The offline player can still move within the track it holds.
+            if (!Spirc.seekTo(positionMs)) return requireReady("seekTo")
+            playbackStateHolder.seekTo(positionMs.toDuration(DurationUnit.MILLISECONDS))
+            playbackStateHolder.updatePosition(positionMs)
+            return true
+        }
+
         // Checked before the optimistic UI update below, so a seek that cannot be
         // delivered does not leave the progress bar lying about the position.
         if (!requireReady("seekTo")) return false
@@ -347,31 +365,25 @@ class SpircWrapper @Inject constructor(
     /**
      * Tells the player to start playing
      */
-    override fun playerPlay(): Boolean {
-        if (!requireReady("playerPlay")) return false
-
+    override fun playerPlay(): Boolean = playbackCommand("playerPlay") {
         startForegroundPlaybackService()
-        return Spirc.playerPlay()
+        Spirc.playerPlay()
     }
 
     /**
      * Tells the player to pause playing
      */
-    override fun playerPause(): Boolean {
-        if (!requireReady("playerPause")) return false
-
+    override fun playerPause(): Boolean = playbackCommand("playerPause") {
         startPlaybackService()
-        return Spirc.playerPause()
+        Spirc.playerPause()
     }
 
     /**
      * Tells the player to toggle play status
      */
-    override fun playerPlayPause(): Boolean {
-        if (!requireReady("playerPlayPause")) return false
-
+    override fun playerPlayPause(): Boolean = playbackCommand("playerPlayPause") {
         startForegroundPlaybackService()
-        return Spirc.playerPlayPause()
+        Spirc.playerPlayPause()
     }
 
     /**
