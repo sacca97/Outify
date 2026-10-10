@@ -134,7 +134,11 @@ class PlaybackStateHolder @Inject constructor() {
 
         // multiply by playbackSpeed
         val scaled = (elapsed * cur.playbackSpeed).toLong()
-        return cur.position.active.plus(scaled.toDuration(DurationUnit.MILLISECONDS))
+        val estimate = cur.position.active.plus(scaled.toDuration(DurationUnit.MILLISECONDS))
+
+        // Without player events the clock must not run past the end of the track.
+        val durationMs = cur.currentAudio?.duration ?: 0L
+        return if (durationMs > 0) minOf(estimate, durationMs.toDuration(DurationUnit.MILLISECONDS)) else estimate
     }
 
     // Non suspending getter for UI

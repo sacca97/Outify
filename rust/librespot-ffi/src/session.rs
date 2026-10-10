@@ -163,7 +163,11 @@ pub async fn rebuild_all(reason: &str) -> Result<(), String> {
     crate::spirc::set_state(crate::spirc::SpircState::Rebuilding);
     notify_callback("onRestarting");
 
+    // The old player dies with the session. Remember whether there is something
+    // to restore and stop the UI from claiming it is still playing.
+    let resume = crate::spirc::has_context();
     cleanup().await;
+    crate::spirc::mark_stopped();
 
     let mut delay = Duration::from_millis(500);
     let mut last_error = "rebuild never ran".to_string();
@@ -183,7 +187,7 @@ pub async fn rebuild_all(reason: &str) -> Result<(), String> {
         } else {
             // Restore the Connect session before announcing readiness, so that
             // Kotlin accepts commands only once they can actually take effect.
-            crate::spirc::reestablish_after_restart().await;
+            crate::spirc::reestablish_after_restart(resume).await;
             crate::spirc::set_state(crate::spirc::SpircState::Ready);
             notify_callback("onRestarted");
 

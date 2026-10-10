@@ -1030,13 +1030,34 @@ pub fn is_first_track(spirc: &Spirc) -> bool {
 /// How long to wait for the Connect task to report that it became active.
 const ACTIVATION_SETTLE: Duration = Duration::from_millis(1500);
 
+/// Whether a context was loaded that a fresh runtime could restore.
+pub fn has_context() -> bool {
+    CURRENT_CONTEXT
+        .get()
+        .and_then(|c| c.lock().ok().map(|c| c.is_some()))
+        .unwrap_or(false)
+}
+
+/// Reports a stopped player to Kotlin, for when the runtime goes away without
+/// the player getting to emit a `Paused` event.
+///
+/// `IS_PLAYING` is left alone on purpose: `resume_playback` reads it to decide
+/// whether to start playing again.
+pub fn mark_stopped() {
+    crate::jni_utils::playback::on_player_status(false);
+}
+
 /// Re-establishes the Connect session and playback after a (re)build.
 ///
 /// Activating locally can be undone right away by a stale cluster update that
 /// was already on its way, leaving the device inactive and every command
 /// dropped. So the result is checked, and activation is retried once the update
 /// has gone by.
-pub async fn reestablish_after_restart() {
+///
+/// `resume` restores the last context even when auto transfer is off, for a
+/// rebuild that interrupted this device's own session. It starts playing again
+/// only if the player was playing, otherwise it stays paused so that play works.
+pub async fn reestablish_after_restart(resume: bool) {
     for attempt in 1..=3 {
         // After two failed local activations ask the server to hand the
         // session over instead.
@@ -1060,12 +1081,13 @@ pub async fn reestablish_after_restart() {
         tokio::time::sleep(ACTIVATION_SETTLE).await;
         if CONNECT_ACTIVE.load(Ordering::Acquire) {
             info!("device active after restart (attempt {attempt})");
-            if AUTO_TRANSFER.load(Ordering::Relaxed) {
+            if resume || AUTO_TRANSFER.load(Ordering::Relaxed) {
                 let _ = with_spirc(|spirc| spirc.resume_playback());
             } else {
                 // Another device stayed active, so the server drives our state and
                 // reloading the queue here would fight it.
                 debug!("not restoring playback, auto transfer disabled");
+                IS_PLAYING.store(false, Ordering::Relaxed);
             }
             return;
         }
