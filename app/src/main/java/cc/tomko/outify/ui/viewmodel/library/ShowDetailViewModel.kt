@@ -15,6 +15,7 @@ import cc.tomko.outify.core.spirc.SpircWrapper
 import cc.tomko.outify.data.dao.EpisodeDao
 import cc.tomko.outify.data.dao.LikedDao
 import cc.tomko.outify.data.metadata.Metadata
+import cc.tomko.outify.data.repository.LibraryEvents
 import cc.tomko.outify.data.repository.LikedRepository
 import cc.tomko.outify.playback.PlaybackStateHolder
 import cc.tomko.outify.ui.screens.library.show.ShowUiState
@@ -48,6 +49,7 @@ class ShowDetailViewModel @Inject constructor(
     val likedDao: LikedDao,
     private val likedRepository: LikedRepository,
     private val episodeDao: EpisodeDao,
+    private val libraryEvents: LibraryEvents,
     private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -115,6 +117,7 @@ class ShowDetailViewModel @Inject constructor(
                 likedRepository.addLikedShow(showId)
             }
             _isSaved.value = !_isSaved.value
+            libraryEvents.notifyChanged()
         }
     }
 

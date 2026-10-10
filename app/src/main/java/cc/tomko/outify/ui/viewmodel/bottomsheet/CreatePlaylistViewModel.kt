@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import cc.tomko.outify.core.SpClient
 import cc.tomko.outify.data.dao.PlaylistDao
 import cc.tomko.outify.data.database.PlaylistEntity
+import cc.tomko.outify.data.repository.LibraryEvents
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -18,6 +19,7 @@ import javax.inject.Inject
 class CreatePlaylistViewModel @Inject constructor(
     private val spClient: SpClient,
     private val playlistDao: PlaylistDao,
+    private val libraryEvents: LibraryEvents,
 ) : ViewModel() {
 
     private val _result = MutableSharedFlow<Result<String>>(extraBufferCapacity = 1)
@@ -49,6 +51,7 @@ class CreatePlaylistViewModel @Inject constructor(
                         timestamp = System.currentTimeMillis(),
                     )
                 )
+                libraryEvents.notifyChanged()
                 _result.tryEmit(Result.success(playlistId))
             } catch (e: Exception) {
                 _result.tryEmit(Result.failure(e))

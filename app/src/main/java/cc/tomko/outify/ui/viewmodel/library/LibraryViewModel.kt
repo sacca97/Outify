@@ -23,6 +23,7 @@ import cc.tomko.outify.core.model.toSpotifyUri
 import cc.tomko.outify.core.spirc.SpircController
 import cc.tomko.outify.core.spirc.SpircWrapper
 import cc.tomko.outify.data.metadata.Metadata
+import cc.tomko.outify.data.repository.LibraryEvents
 import cc.tomko.outify.data.repository.LikedRepository
 import cc.tomko.outify.data.repository.SettingsRepository
 import cc.tomko.outify.playback.PlaybackStateHolder
@@ -32,6 +33,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -48,6 +50,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+
+private const val LIBRARY_RELOAD_DELAY_MS = 1_000L
 
 enum class LibraryTab { Playlists, Albums, Shows, Episodes }
 
@@ -78,11 +82,19 @@ class LibraryViewModel @Inject constructor(
     private val spircController: SpircController,
     private val playbackStateHolder: PlaybackStateHolder,
     private val likedRepository: LikedRepository,
+    libraryEvents: LibraryEvents,
 ) : ViewModel() {
 
     init {
         viewModelScope.launch {
             metadata.syncLikedPlaylists()
+        }
+        viewModelScope.launch {
+            libraryEvents.changed.collect {
+                // The server can still answer with the old list right after a change.
+                delay(LIBRARY_RELOAD_DELAY_MS)
+                reloadAfterChange()
+            }
         }
     }
 
@@ -402,6 +414,13 @@ class LibraryViewModel @Inject constructor(
                 EpisodeDetails.fromJson(checked)
             }.getOrNull()
         }
+    }
+
+    /** Reloads the lists the user may have changed elsewhere in the app. */
+    private fun reloadAfterChange() {
+        loadPlaylistUris(force = true)
+        if (albumsLoaded) loadAlbumUris(force = true)
+        if (showsLoaded) loadShowUris(force = true)
     }
 
     fun refresh() {

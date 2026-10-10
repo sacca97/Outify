@@ -15,6 +15,7 @@ import cc.tomko.outify.core.spirc.SpircController
 import cc.tomko.outify.core.spirc.SpircWrapper
 import cc.tomko.outify.data.dao.LikedDao
 import cc.tomko.outify.data.metadata.Metadata
+import cc.tomko.outify.data.repository.LibraryEvents
 import cc.tomko.outify.playback.PlaybackStateHolder
 import dagger.hilt.android.lifecycle.HiltViewModel
 import jakarta.inject.Inject
@@ -44,6 +45,7 @@ class PlaylistDetailViewModel @Inject constructor(
     val userProfile: UserProfile,
     val likedDao: LikedDao,
     val spClient: SpClient,
+    private val libraryEvents: LibraryEvents,
     private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -88,6 +90,7 @@ class PlaylistDetailViewModel @Inject constructor(
                 metadata.addLikedPlaylist(playlistUri)
             }
             _isSaved.value = !_isSaved.value
+            libraryEvents.notifyChanged()
         }
     }
 

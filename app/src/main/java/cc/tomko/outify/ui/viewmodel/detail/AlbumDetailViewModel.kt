@@ -11,6 +11,7 @@ import cc.tomko.outify.core.spirc.SpircController
 import cc.tomko.outify.core.spirc.SpircWrapper
 import cc.tomko.outify.data.dao.LikedDao
 import cc.tomko.outify.data.metadata.Metadata
+import cc.tomko.outify.data.repository.LibraryEvents
 import cc.tomko.outify.playback.PlaybackStateHolder
 import cc.tomko.outify.ui.screens.library.album.AlbumUiState
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -38,6 +39,7 @@ class AlbumDetailViewModel @Inject constructor(
     val spClient: SpClient,
     val json: Json,
     val likedDao: LikedDao,
+    private val libraryEvents: LibraryEvents,
     private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -95,6 +97,7 @@ class AlbumDetailViewModel @Inject constructor(
                 metadata.addLikedAlbum(uri)
             }
             _isSaved.value = !_isSaved.value
+            libraryEvents.notifyChanged()
         }
     }
 
