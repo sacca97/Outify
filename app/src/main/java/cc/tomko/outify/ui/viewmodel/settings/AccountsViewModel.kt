@@ -2,9 +2,11 @@ package cc.tomko.outify.ui.viewmodel.settings
 
 import android.content.Context
 import android.content.Intent
+import android.widget.Toast
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cc.tomko.outify.R
 import cc.tomko.outify.core.AuthCallbackServerManager
 import cc.tomko.outify.core.AuthManager
 import cc.tomko.outify.core.AuthStateEventBus
@@ -105,6 +107,11 @@ class AccountsViewModel @Inject constructor(
         })
 
         val url = authManager.getAuthorizationURL()
+        if (url == null) {
+            OAuthService.stop(context)
+            Toast.makeText(context, R.string.auth_not_ready, Toast.LENGTH_LONG).show()
+            return
+        }
 
         context.startActivity(
             Intent(Intent.ACTION_VIEW, url.toUri())
