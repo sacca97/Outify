@@ -673,7 +673,19 @@ pub extern "system" fn Java_cc_tomko_outify_core_spirc_Spirc_playerPrevious(
     _env: JNIEnv,
     _this: JClass,
 ) -> jboolean {
-    match with_spirc(|runtime| runtime.prev()) {
+    let first = with_spirc(|runtime| runtime.handle())
+        .map(|handle| crate::spirc::is_first_track(&handle))
+        .unwrap_or(false);
+
+    let result = with_spirc(|runtime| {
+        if first {
+            runtime.seek_to(0)
+        } else {
+            runtime.prev()
+        }
+    });
+
+    match result {
         Ok(Ok(_)) => 1,
         Ok(Err(e)) => {
             warn!("with_spirc prev failed: {e:?}");

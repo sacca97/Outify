@@ -327,26 +327,9 @@ impl SpircRuntime {
     }
 
     pub fn prev(&self) -> Result<(), librespot_core::Error> {
-        // Going back from the first track makes librespot stop the player, and a
-        // stopped player ignores play and next. Restart the track instead.
-        if self.is_first_track() {
-            return self.seek_to(0);
-        }
         self.spirc.prev()?;
         self.arm("prev");
         Ok(())
-    }
-
-    /// Whether nothing precedes the current track. Answers `false` when the
-    /// Connect task cannot be asked, so a normal `prev` is attempted.
-    fn is_first_track(&self) -> bool {
-        let Some(rt) = crate::TOKIO_RUNTIME.get() else {
-            return false;
-        };
-        let asked = rt.block_on(async {
-            tokio::time::timeout(Duration::from_secs(1), self.spirc.prev_tracks()).await
-        });
-        matches!(asked, Ok(Some(tracks)) if tracks.is_empty())
     }
 
     pub fn load(
@@ -1017,6 +1000,22 @@ fn command_ack_diagnostics() -> String {
         },
         None => "unavailable".to_string(),
     }
+}
+
+/// Whether nothing precedes the current track. Answers `false` when the
+/// Connect task cannot be asked, so a normal `prev` is attempted.
+///
+/// Going back from the first track makes librespot stop the player, and a
+/// stopped player ignores play and next, so callers restart the track instead.
+/// Blocks for up to a second: call it without holding the runtime lock.
+pub fn is_first_track(spirc: &Spirc) -> bool {
+    let Some(rt) = crate::TOKIO_RUNTIME.get() else {
+        return false;
+    };
+    let asked = rt.block_on(async {
+        tokio::time::timeout(Duration::from_secs(1), spirc.prev_tracks()).await
+    });
+    matches!(asked, Ok(Some(tracks)) if tracks.is_empty())
 }
 
 /// How long to wait for the Connect task to report that it became active.
