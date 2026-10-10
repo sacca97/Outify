@@ -1,12 +1,17 @@
 package cc.tomko.outify.core.spirc
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.SystemClock
 import android.util.Log
+import cc.tomko.outify.core.AuthManager
 import cc.tomko.outify.core.Session
 import cc.tomko.outify.core.SessionCallback
 import cc.tomko.outify.data.repository.SettingsRepository
 import cc.tomko.outify.playback.PlaybackStateHolder
 import cc.tomko.outify.playback.model.getSpeed
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,12 +39,20 @@ private const val MAX_AUTO_RETRIES = 5
 /** Minimum time between two retries triggered by dropped commands. */
 private const val MIN_COMMAND_RETRY_GAP_MS = 2_000L
 
+/** How long the network must stay unchanged before the session is rebuilt for it. */
+private const val NETWORK_SETTLE_MS = 2_000L
+
+/** Minimum time between two rebuilds triggered by network changes. */
+private const val MIN_NETWORK_RESTART_GAP_MS = 10_000L
+
 /**
  * Owns the spirc lifecycle.
  */
 @Singleton
 class SpircController @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val session: Session,
+    private val authManager: AuthManager,
     private val spirc: SpircWrapper,
     private val playbackStateHolder: PlaybackStateHolder,
     private val settingsRepository: SettingsRepository,
@@ -62,8 +75,13 @@ class SpircController @Inject constructor(
     private var autoRetries = 0
     private var lastCommandRetryAt = 0L
 
+    private var networkWatched = false
+    private var networkJob: Job? = null
+    private var lastNetworkRestartAt = 0L
+
     fun start() {
         collectDroppedCommands()
+        watchNetwork()
 
         session.initializeSession(object : SessionCallback {
             override fun onInitialized() {
@@ -82,6 +100,9 @@ class SpircController @Inject constructor(
             }
 
             override fun onRestarted() {
+                // A first start without a login never reached the registration in
+                // initializeSpirc.
+                registerCallbacks()
                 updateState(SpircState.Ready)
                 refreshPlaybackState()
             }
@@ -92,6 +113,59 @@ class SpircController @Inject constructor(
                 updateState(SpircState.Failed)
             }
         })
+    }
+
+    /**
+     * Rebuilds the session when the device switches network, for example from
+     * Wi-Fi to mobile data. The connections of the old network can die without
+     * any error, which leaves the player "playing" with no audio arriving.
+     */
+    private fun watchNetwork() {
+        if (networkWatched) return
+        networkWatched = true
+
+        val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return
+        var current: Network? = null
+
+        try {
+            connectivity.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    val previous = current
+                    current = network
+                    // The first callback only reports the network we start on.
+                    if (previous != null && previous != network) onNetworkChanged()
+                }
+            })
+        } catch (e: SecurityException) {
+            Log.w(TAG, "cannot watch the network", e)
+        }
+    }
+
+    private fun onNetworkChanged() {
+        networkJob?.cancel()
+        networkJob = spirc.scope.launch {
+            delay(NETWORK_SETTLE_MS)
+
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastNetworkRestartAt < MIN_NETWORK_RESTART_GAP_MS) return@launch
+
+            when {
+                // A failed runtime may work on the new network, so skip the backoff.
+                _state.value == SpircState.Failed -> {
+                    retryJob?.cancel()
+                    autoRetries = 0
+                }
+                // Only the device that is playing has something to lose; rebuilding
+                // activates the device and must not take over from another one.
+                _state.value == SpircState.Ready &&
+                        playbackStateHolder.state.value.isActiveDevice -> Unit
+                else -> return@launch
+            }
+
+            lastNetworkRestartAt = now
+            Log.i(TAG, "network changed, rebuilding the session")
+            restart("network changed")
+        }
     }
 
     /**
@@ -142,6 +216,7 @@ class SpircController @Inject constructor(
      * Rebuilds the Connect runtime, applying the current playback settings.
      */
     fun restart(reason: String = "requested") {
+        if (!waitingForLogin()) return
         updateState(SpircState.Rebuilding)
 
         spirc.scope.launch {
@@ -162,12 +237,28 @@ class SpircController @Inject constructor(
     }
 
     /**
+     * Without a playback login there is nothing to start, and trying anyway would
+     * only fail, drop the session and retry. The login screen needs that session
+     * to build its authorization URL. Returns `true` when a login exists.
+     */
+    private fun waitingForLogin(): Boolean {
+        if (authManager.hasCachedCredentials()) return true
+
+        Log.i(TAG, "no playback login yet, not starting spirc")
+        retryJob?.cancel()
+        updateState(SpircState.Stopped)
+        return false
+    }
+
+    /**
      * Requests a restart and suspends until the runtime is usable again.
      */
     suspend fun restartAndAwaitReady(
         reason: String = "retry",
         timeoutMs: Long = RESTART_TIMEOUT_MS,
     ): Boolean {
+        if (!authManager.hasCachedCredentials()) return false
+
         restart(reason)
 
         val settled = withTimeoutOrNull(timeoutMs.milliseconds) {
@@ -178,6 +269,8 @@ class SpircController @Inject constructor(
     }
 
     private suspend fun initializeSpirc() {
+        if (!waitingForLogin()) return
+
         val gapless = settingsRepository.gaplessPlayback.first()
         val normalise = settingsRepository.normalizePlayback.first()
         val bitrate = settingsRepository.bitrate.first()
