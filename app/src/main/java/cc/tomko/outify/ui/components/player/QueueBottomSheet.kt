@@ -48,7 +48,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import cc.tomko.outify.ui.components.bottomsheet.OutifyModalBottomSheet
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -221,7 +221,7 @@ fun SharedTransitionScope.QueueBottomSheet(
         }
     }.value
 
-    ModalBottomSheet(
+    OutifyModalBottomSheet(
         onDismissRequest = onDismissRequest,
         sheetState = sheetState,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
@@ -648,7 +648,7 @@ fun SharedTransitionScope.QueueBottomSheet(
                 }
             }
 
-            this@ModalBottomSheet.AnimatedVisibility(
+            this@OutifyModalBottomSheet.AnimatedVisibility(
                 modifier = Modifier.align(Alignment.BottomEnd),
                 visible = showScrollToCurrent,
                 enter = fadeIn() + slideInVertically(initialOffsetY = { it }),

@@ -31,7 +31,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import cc.tomko.outify.ui.components.bottomsheet.OutifyModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -284,14 +284,13 @@ fun CustomSpeedBottomSheet(
         scope.launch { sheetState.hide() }.invokeOnCompletion { onConfirm(speed) }
     }
 
-    ModalBottomSheet(
+    OutifyModalBottomSheet(
         onDismissRequest = ::dismiss,
         sheetState = sheetState,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(horizontal = 24.dp, vertical = 8.dp),
         ) {
             Text(

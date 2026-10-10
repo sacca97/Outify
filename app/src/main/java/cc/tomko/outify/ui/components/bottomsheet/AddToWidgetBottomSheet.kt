@@ -28,7 +28,6 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -69,7 +68,7 @@ fun AddToWidgetBottomSheet(
 
     val trackCoverUrl = track.album?.getCover(CoverSize.MEDIUM)?.uri?.let { ALBUM_COVER_URL + it }
 
-    ModalBottomSheet(
+    OutifyModalBottomSheet(
         onDismissRequest = { coroutineScope.launch { onDismiss?.invoke() } },
         sheetState = sheetState,
         modifier = modifier,

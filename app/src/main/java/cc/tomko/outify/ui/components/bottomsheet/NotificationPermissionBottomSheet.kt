@@ -19,7 +19,6 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,7 +41,7 @@ fun NotificationPermissionBottomSheet(
     modifier: Modifier = Modifier,
     sheetState: SheetState = rememberModalBottomSheetState(),
 ) {
-    ModalBottomSheet(
+    OutifyModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         modifier = modifier,
@@ -64,7 +63,6 @@ private fun NotificationPermissionSheetContent(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 28.dp)
-            .navigationBarsPadding()
             .padding(top = 8.dp, bottom = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {

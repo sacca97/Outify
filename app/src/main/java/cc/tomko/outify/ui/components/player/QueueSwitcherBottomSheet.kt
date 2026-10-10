@@ -34,7 +34,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import cc.tomko.outify.ui.components.bottomsheet.OutifyModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -75,7 +75,7 @@ fun QueueSwitcherBottomSheet(
     var showSaveDialog by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<SavedQueue?>(null) }
 
-    ModalBottomSheet(
+    OutifyModalBottomSheet(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
     ) {

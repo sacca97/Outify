@@ -30,7 +30,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import cc.tomko.outify.ui.components.bottomsheet.OutifyModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.ProvideTextStyle
@@ -382,7 +382,7 @@ fun ColorPreferenceEntry(
     )
 
     if (showPicker) {
-        ModalBottomSheet(
+        OutifyModalBottomSheet(
             onDismissRequest = { showPicker = false },
             sheetState = sheetState
         ) {
