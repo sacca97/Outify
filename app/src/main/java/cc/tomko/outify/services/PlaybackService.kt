@@ -208,6 +208,19 @@ class PlaybackService : MediaLibraryService(),
                 }
         }
 
+        // What the car resumes after a reconnect, or after the app was killed.
+        scope.launch {
+            playbackStateHolder.state
+                .map { it.currentAudio?.uri to it.isPlaying }
+                .distinctUntilChanged()
+                .collect { (uri, playing) ->
+                    if (uri == null) return@collect
+                    val position = if (playing) 0L
+                    else playbackStateHolder.estimatePosition().inWholeMilliseconds
+                    settings.saveLastTrack(uri, position)
+                }
+        }
+
         registerReceiver(
             becomingNoisyListener,
             IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)

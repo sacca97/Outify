@@ -176,12 +176,7 @@ class SpircWrapper @Inject constructor(
         scope.launch {
             savedQueueRepository.setActiveQueueId(null)
 
-            val currentPosition = playbackStateHolder.estimatePosition().inWholeMilliseconds
-            settingsRepository.saveLastPlayback(
-                trackUri = playingTrackUri?.toUriString(),
-                contextUri = context?.toUriString(),
-                positionMs = if (currentPosition > 0) currentPosition else null
-            )
+            settingsRepository.saveLastContext(context?.toUriString())
         }
 
         startForegroundPlaybackService()
@@ -244,11 +239,7 @@ class SpircWrapper @Inject constructor(
 
         scope.launch {
             savedQueueRepository.setActiveQueueId(null)
-            settingsRepository.saveLastPlayback(
-                trackUri = null,
-                contextUri = uri,
-                positionMs = null
-            )
+            settingsRepository.saveLastContext(uri)
         }
 
         startForegroundPlaybackService()
@@ -352,12 +343,6 @@ class SpircWrapper @Inject constructor(
         // Assuming it went successfully - pre-updating the position
         playbackStateHolder.seekTo(positionMs.toDuration(DurationUnit.MILLISECONDS))
         playbackStateHolder.updatePosition(positionMs)
-
-        settingsRepository.saveLastPlayback(
-            trackUri = null,
-            contextUri = null,
-            positionMs = positionMs
-        )
 
         return Spirc.seekTo(positionMs)
     }

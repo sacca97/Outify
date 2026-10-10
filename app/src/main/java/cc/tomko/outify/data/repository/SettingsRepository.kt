@@ -351,14 +351,19 @@ class SettingsRepository @Inject constructor(
         dataStore.edit { it[Keys.Gesture.FLIP_QUEUE] = enabled }
     }
 
-    suspend fun saveLastPlayback(trackUri: String?, contextUri: String?, positionMs: Long?) {
+    /** Remembers the context playback was last started from, none for a single track. */
+    suspend fun saveLastContext(contextUri: String?) {
         dataStore.edit { prefs ->
-            if (trackUri != null) prefs[Keys.Playback.LAST_TRACK_URI] = trackUri
-            else prefs.remove(Keys.Playback.LAST_TRACK_URI)
             if (contextUri != null) prefs[Keys.Playback.LAST_CONTEXT_URI] = contextUri
             else prefs.remove(Keys.Playback.LAST_CONTEXT_URI)
-            if (positionMs != null) prefs[Keys.Playback.LAST_POSITION_MS] = positionMs.toString()
-            else prefs.remove(Keys.Playback.LAST_POSITION_MS)
+        }
+    }
+
+    /** Remembers the track that was playing last and how far it got. */
+    suspend fun saveLastTrack(trackUri: String, positionMs: Long) {
+        dataStore.edit { prefs ->
+            prefs[Keys.Playback.LAST_TRACK_URI] = trackUri
+            prefs[Keys.Playback.LAST_POSITION_MS] = positionMs.toString()
         }
     }
 

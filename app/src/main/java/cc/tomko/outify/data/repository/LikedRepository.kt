@@ -165,6 +165,10 @@ class LikedRepository @Inject constructor(
         return true
     }
 
+    /** The liked track URIs as last synced, available without a connection. */
+    suspend fun getCachedLikedUris(): List<String> =
+        likedDao.getLikedIds().map { "spotify:track:$it" }
+
     /**
      * Emits TrackWithArtists rows for every liked song that has metadata cached.
      */

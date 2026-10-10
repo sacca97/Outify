@@ -34,6 +34,10 @@ interface PlaylistDao {
     @Query("SELECT * FROM playlists WHERE id = :id")
     fun getPlaylistWithItemsFlow(id: String): Flow<PlaylistWithItems?>
 
+    /** The playlists themselves, without their items. */
+    @Query("SELECT * FROM playlists WHERE id IN (:ids)")
+    suspend fun getPlaylists(ids: List<String>): List<PlaylistEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPlaylist(entity: PlaylistEntity)
 
