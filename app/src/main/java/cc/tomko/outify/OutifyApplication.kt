@@ -78,11 +78,11 @@ class OutifyApplication : Application() {
             val spotifyId = settingsRepository.clientId.firstOrNull() ?: BuildConfig.SPOTIFY_CLIENT_ID
             val spotifySecret = settingsRepository.clientSecret.firstOrNull() ?: BuildConfig.SPOTIFY_CLIENT_SECRET
 
-            // Always initialise the native side: the UI calls into it even before
-            // credentials are set, and they can be entered later in the settings.
+            // Always initialise the native side and the session: playback login and
+            // the settings need them even before Web API credentials are set.
             LibrespotFfi.libInit(applicationContext, spotifyId, spotifySecret)
 
-            if (spotifySecret.isEmpty() || spotifyId.isEmpty()) {
+            if (spotifyId.isEmpty()) {
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
                         this@OutifyApplication,
@@ -90,8 +90,6 @@ class OutifyApplication : Application() {
                         Toast.LENGTH_LONG
                     ).show()
                 }
-
-                return@launch
             }
 
             spircController.start()

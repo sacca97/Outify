@@ -1,5 +1,11 @@
 package cc.tomko.outify.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
@@ -36,10 +42,15 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -48,6 +59,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cc.tomko.outify.R
 import cc.tomko.outify.ui.viewmodel.OnboardingStep
@@ -66,6 +78,7 @@ fun OnboardingScreen(
     val currentIndex by viewModel.currentIndex.collectAsStateWithLifecycle()
     val isPlaybackLoggedIn by viewModel.isPlaybackLoggedIn.collectAsStateWithLifecycle()
     val isAccountLoggedIn by viewModel.isAccountLoggedIn.collectAsStateWithLifecycle()
+    val hasClientId by viewModel.hasClientId.collectAsStateWithLifecycle()
 
     val currentStep = steps.getOrNull(currentIndex) ?: OnboardingStep.PLAYBACK
 
@@ -115,7 +128,8 @@ fun OnboardingScreen(
 
                 OnboardingStep.ACCOUNT -> AccountLoginContent(
                     isLoggedIn = isAccountLoggedIn,
-                    onConnect = { viewModel.startAccountAuth(context) }
+                    hasClientId = hasClientId,
+                    onConnect = { id -> viewModel.startAccountAuth(context, id) }
                 )
             }
         }
@@ -304,8 +318,13 @@ private fun PlaybackLoginContent(
 @Composable
 private fun AccountLoginContent(
     isLoggedIn: Boolean,
-    onConnect: () -> Unit,
+    hasClientId: Boolean,
+    onConnect: (clientId: String) -> Unit,
 ) {
+    val context = LocalContext.current
+    var clientId by rememberSaveable { mutableStateOf("") }
+    val canConnect = hasClientId || clientId.isNotBlank()
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -368,6 +387,36 @@ private fun AccountLoginContent(
             }
         }
 
+        if (!hasClientId) {
+            Spacer(Modifier.height(24.dp))
+
+            Text(
+                text = stringResource(R.string.onb_client_credentials_desc),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Spacer(Modifier.height(12.dp))
+
+            OutlinedButton(
+                onClick = { openSpotifyDashboard(context) },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.onb_open_dashboard))
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            OutlinedTextField(
+                value = clientId,
+                onValueChange = { clientId = it },
+                label = { Text(stringResource(R.string.settings_client_id)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+        }
+
         Spacer(Modifier.height(40.dp))
 
         AnimatedVisibility(visible = isLoggedIn) {
@@ -391,8 +440,8 @@ private fun AccountLoginContent(
         Spacer(Modifier.height(12.dp))
 
         Button(
-            onClick = onConnect,
-            enabled = !isLoggedIn,
+            onClick = { onConnect(clientId) },
+            enabled = !isLoggedIn && canConnect,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(60.dp),
@@ -413,6 +462,20 @@ private fun AccountLoginContent(
 
         Spacer(Modifier.height(48.dp))
     }
+}
+
+private const val SPOTIFY_DASHBOARD_URL = "https://developer.spotify.com/dashboard/create"
+private const val SPOTIFY_REDIRECT_URI = "http://127.0.0.1:5588/account/login"
+
+/** Copies the redirect URI, so it can simply be pasted into the dashboard, and opens the dashboard. */
+private fun openSpotifyDashboard(context: Context) {
+    val clipboard = context.getSystemService(ClipboardManager::class.java)
+    clipboard.setPrimaryClip(ClipData.newPlainText("Redirect URI", SPOTIFY_REDIRECT_URI))
+    // Android 13+ shows its own confirmation.
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+        Toast.makeText(context, R.string.onb_redirect_copied, Toast.LENGTH_SHORT).show()
+    }
+    context.startActivity(Intent(Intent.ACTION_VIEW, SPOTIFY_DASHBOARD_URL.toUri()))
 }
 
 @Composable

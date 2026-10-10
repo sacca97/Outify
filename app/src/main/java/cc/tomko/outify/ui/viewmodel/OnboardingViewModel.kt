@@ -5,6 +5,8 @@ import android.content.Intent
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import cc.tomko.outify.BuildConfig
+import cc.tomko.outify.LibrespotFfi
 import cc.tomko.outify.core.AuthCallbackServerManager
 import cc.tomko.outify.core.AuthManager
 import cc.tomko.outify.core.AuthStateEvent
@@ -18,8 +20,12 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -58,6 +64,14 @@ class OnboardingViewModel @Inject constructor(
 
     private val _isComplete = MutableStateFlow(false)
     val isComplete: StateFlow<Boolean> = _isComplete.asStateFlow()
+
+    /**
+     * Whether a Web API client ID is available, from the build or saved by the user.
+     * The login uses PKCE, so no client secret is needed.
+     */
+    val hasClientId: StateFlow<Boolean> = settingsRepository.clientId
+        .map { !(it ?: BuildConfig.SPOTIFY_CLIENT_ID).isEmpty() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     init {
         refreshState()
@@ -120,8 +134,20 @@ class OnboardingViewModel @Inject constructor(
         context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
     }
 
-    fun startAccountAuth(context: Context) {
+    /**
+     * Starts the Web API login. When a [clientId] is given it is saved first, so builds
+     * without a bundled client ID can still sign in.
+     */
+    fun startAccountAuth(context: Context, clientId: String = "") {
         viewModelScope.launch {
+            if (clientId.isNotBlank()) {
+                val secret = settingsRepository.clientSecret.firstOrNull() ?: BuildConfig.SPOTIFY_CLIENT_SECRET
+                settingsRepository.setClientId(clientId.trim())
+                withContext(Dispatchers.IO) {
+                    LibrespotFfi.updateClientCredentials(clientId.trim(), secret)
+                }
+            }
+
             OAuthService.start(context)
 
             serverManager.start(onCodeReceived = { code, _ ->

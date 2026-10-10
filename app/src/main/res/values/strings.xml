@@ -280,6 +280,9 @@
     <string name="onb_keep_synced">Keep your listening synced</string>
     <string name="onb_playback_connected">Playback login connected</string>
     <string name="onb_account_login_desc">A Spotify Premium subscription is required. Connect your Spotify account to unlock library, playlists, likes and recommendations. This is handled securely via OAuth.</string>
+    <string name="onb_client_credentials_desc">This build has no Spotify client ID. Tap the button below: the redirect URI is copied, so paste it into the new app\'s Redirect URIs, choose Web API, then copy the Client ID here.</string>
+    <string name="onb_open_dashboard">Open Spotify dashboard</string>
+    <string name="onb_redirect_copied">Redirect URI copied</string>
     <string name="onb_like_tracks">Like and unlike tracks, albums and artists</string>
     <string name="onb_manage_playlists">Create and manage your playlists</string>
     <string name="onb_account_connected">Account connected</string>
